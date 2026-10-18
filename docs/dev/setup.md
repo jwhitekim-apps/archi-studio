@@ -50,6 +50,79 @@ docker exec supabase_db_archi-studio psql -U postgres -d postgres -At \
 - 메모리(`docker stats`, 컨테이너 12개 합계): 약 1.7GiB. 가장 큰 것은 analytics 약 570MiB, 그다음 realtime 약 220MiB, studio 약 200MiB, storage 약 160MiB, db 약 140MiB다.
 - 서버 전체 메모리 15GiB 중 시작 전 사용량은 약 3.4GiB였다.
 
+## 화면 셸 검증 (스크린샷과 포커스 검사)
+
+`scripts/shell-screens.mjs`는 Playwright의 Chromium으로 셸을 열어 1280px, 767px, 390px의 레이아웃,
+라이트·다크 두 테마, 모바일 패널의 포커스 이동·복귀·배경 `inert`를 검사하고 스크린샷을 저장한다.
+검사가 하나라도 실패하면 종료 코드가 1이다. DB는 필요 없다.
+
+### 1. Node
+
+Node는 `^20.19.0 || >=22.12.0`이어야 한다(Vite 7의 요구). 이 저장소는 Node 20을 기준으로 한다.
+
+```bash
+nvm install 20 && nvm use 20
+node -v          # v20.19.0 이상이어야 한다
+npm install
+```
+
+### 2. Chromium
+
+```bash
+npx playwright install chromium     # ~/.cache/ms-playwright 에 설치된다
+```
+
+### 3. 시스템 라이브러리 (없을 때만)
+
+Chromium이 쓰는 라이브러리(`libatk`, `libgbm`, `libasound` 등)가 서버에 없고 `sudo`를 쓸 수 없으면,
+패키지를 받아 임시 폴더에 풀고 `LD_LIBRARY_PATH`로만 쓴다. 시스템은 바뀌지 않는다.
+패키지 이름은 Ubuntu 24.04 이후 기준이다.
+
+먼저 빠진 라이브러리가 있는지 본다. 아무것도 안 나오면 이 단계는 건너뛴다.
+
+```bash
+ldd ~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | grep "not found"
+```
+
+빠진 것이 있으면:
+
+```bash
+LIBS=$HOME/.cache/archi-chromelibs
+mkdir -p "$LIBS/debs" "$LIBS/root"
+(cd "$LIBS/debs" && apt-get download libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 \
+  libatspi2.0-0t64 libgbm1 libxcomposite1 libxdamage1 libxfixes3 libxi6 libxrandr2 \
+  libxrender1 libxres1)
+for f in "$LIBS"/debs/*.deb; do dpkg-deb -x "$f" "$LIBS/root"; done
+export LD_LIBRARY_PATH="$LIBS/root/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+ldd ~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | grep -c "not found"   # 0 이어야 한다
+```
+
+`LD_LIBRARY_PATH`는 터미널을 새로 열 때마다 다시 지정한다.
+Chromium을 `LD_LIBRARY_PATH` 없이 시작하면 `error while loading shared libraries: libatk-1.0.so.0` 처럼 종료한다.
+
+### 4. 실행
+
+서버를 하나 띄우고 그 주소를 인자로 준다. 포트 4173은 빌드한 미리보기, 5273은 개발 서버 예시다.
+다른 서비스가 쓰는 포트(위 포트 표)와 겹치지 않게 고른다.
+
+```bash
+# 방법 A: 빌드한 미리보기 (기본 주소 http://127.0.0.1:4173)
+npm run build
+npm run preview -- --port 4173 --host 127.0.0.1 &
+node scripts/shell-screens.mjs http://127.0.0.1:4173 "$(mktemp -d)"
+kill %1
+
+# 방법 B: 개발 서버
+npm run dev -- --port 5273 --host 127.0.0.1 &
+curl -s -o /dev/null http://127.0.0.1:5273/; sleep 5      # 첫 접속에 Vite가 의존성을 다시 최적화하며 페이지를 새로고침하므로 먼저 한 번 열어 둔다
+node scripts/shell-screens.mjs http://127.0.0.1:5273 "$(mktemp -d)"
+kill %1
+```
+
+- 출력의 `OK`/`FAIL` 줄이 검사 결과다. 스크린샷은 두 번째 인자로 준 폴더에 `light|dark-1280.png`, `-390.png`, `-390-menu.png`, `-390-panel.png`로 저장된다.
+- 서버에 한글 글꼴이 없으면 스크린샷에 글자가 보이지 않는다. 영역, 색, 겹침은 확인되고 글자는 DOM 검사로 대신한다.
+- 끝나면 띄운 서버를 반드시 종료한다(`kill %1`).
+
 ## 인증 테스트 실행
 
 인증 통합 테스트(`npm run test:auth`)는 로컬 Supabase가 떠 있고 접속 정보가 `.env`에 있어야 돌아간다. 일반 `npm test`는 로컬 DB 없이 돈다.

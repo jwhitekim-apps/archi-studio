@@ -113,9 +113,9 @@ PK `(user_id, key)`. `paperCount`는 저장하지 않고 `papers.collections`에
 | `item_key` | text | | Zotero 키 |
 | `item_version` | bigint | | Zotero 항목 버전 |
 | `s2_paper_id` | text | | Semantic Scholar 키 |
-| `title` | text | | |
+| `title` | text | | null 허용. 응답(`title`)에서는 null이면 빈 문자열 `""`로 바꾼다 |
 | `authors` | jsonb | NN, default '[]' | 문자열 배열 |
-| `year` | text | | 폴리오와 같은 타입 |
+| `year` | text | | 폴리오와 같은 타입(Zotero의 날짜 문자열 그대로). 응답(`year`)은 처음 나오는 네 자리 숫자를 정수로 바꾸고, 없거나 비어 있으면 null이다 |
 | `collections` | jsonb | NN, default '[]' | 컬렉션 키 배열 |
 | `attachment_key` | text | | 원문 파일을 Zotero에서 가져올 때 쓴다 |
 | `attachment_type` | text | check in ('pdf','html') | null이면 첨부 없음 |
@@ -138,7 +138,7 @@ PK `(user_id, key)`. `paperCount`는 저장하지 않고 `papers.collections`에
 
 | 컬럼 | 타입 | 제약 | 설명 |
 |---|---|---|---|
-| `id` | bigint | PK, identity | |
+| `id` | uuid | PK, default gen_random_uuid() | API의 `TranslationRecord.id`(uuid)와 같은 값 |
 | `user_id` | uuid | NN, FK `auth.users(id)` on delete cascade | |
 | `paper_id` | uuid | FK `papers(id)` on delete cascade | `POST /api/translate`의 선택 값 `paperId`. 없으면 null. 논문을 지우면 연결된 이력도 함께 지워진다. 요청 때 본인 논문인지 확인하고 아니면 404 |
 | `source_text` | text | NN | 요청의 `text` |
@@ -146,9 +146,9 @@ PK `(user_id, key)`. `paperCount`는 저장하지 않고 `papers.collections`에
 | `type` | text | NN, check in ('word','sentence') | 구분 규칙은 task 2.2에서 정한다 |
 | `created_at` | timestamptz | NN, default now() | |
 
-인덱스: `(user_id, created_at desc)`, `(user_id, source_text)`(캐시 조회), `(paper_id) where paper_id is not null`.
+인덱스: `(user_id, created_at desc)`, `(user_id, md5(source_text))`(캐시 조회), `(paper_id) where paper_id is not null`.
 
-`source_text` 최대 길이는 task 2.2에서 정한다. btree 인덱스에는 행 크기 한계가 있으니 그 길이가 한계 안에 들어가거나, 인덱스를 `md5(source_text)`로 걸어야 한다.
+`source_text`는 최대 5000자까지 저장해야 한다(translation 스펙). btree 인덱스에는 행 크기 한계가 있어 원문 전체를 인덱스에 넣을 수 없으므로 `md5(source_text)`에 인덱스를 걸고, 캐시 조회는 해시로 후보를 좁힌 뒤 `source_text` 일치도 함께 확인한다.
 
 ### 3.9 `archi_analyses`
 

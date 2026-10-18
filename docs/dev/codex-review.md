@@ -26,7 +26,7 @@ Archi Studio(SvelteKit + TypeScript, 로컬 Supabase)에서 지금까지 만든 
 | 서버 | `src/hooks.server.ts`, `src/lib/server/`, `src/routes/api/` |
 | 화면 셸 | `src/lib/components/AppShell.svelte`, `src/lib/styles/tokens.css`, `src/routes/+layout.svelte`, `+page.svelte` |
 | 디자인 문서 | `docs/design/token-map.md`, `scripts/check-tokens.mjs`, `scripts/shell-screens.mjs` |
-| 개발 문서 | `docs/dev/setup.md`, `auth-test-map.md`, `codex-review-auth.md` |
+| 개발 문서 | `docs/dev/setup.md`, `auth-test-map.md` |
 
 ## 작업 A. 명세와 문서의 일관성
 
@@ -70,12 +70,36 @@ Archi Studio(SvelteKit + TypeScript, 로컬 Supabase)에서 지금까지 만든 
 
 ## 작업 F. 인증 구현
 
-`docs/dev/codex-review-auth.md`의 작업 1~3(보안 검토, 스펙·코드 대조, 동시성과 경계 사례)을 그대로 수행한다. 그 문서의 "이미 알려진 사항"도 여기에 적용한다.
+읽을 파일: `openspec/specs/auth/spec.md`, `docs/api/openapi.yaml`(auth 경로), `openspec/changes/archive/2026-10-18-archi-studio-auth/design.md`, `src/routes/api/auth/*/+server.ts`, `src/lib/server/`의 `auth-service.ts`, `login-attempts.ts`, `session.ts`, `session-cookie.ts`, `api-guard.ts`, `supabase.ts`, `supabase-options.ts`, `errors.ts`, `src/hooks.server.ts`, 테스트 `auth.integration.ts`, `session.integration.ts`, `session-cookie.test.ts`, `api-guard.test.ts`, `docs/dev/auth-test-map.md`. 각 항목은 "문제 없음 / 문제 있음 / 확인하지 못함"과 근거(파일:줄)를 적는다.
+
+### F-1. 보안 검토
+
+1. 쿠키 속성: `httpOnly`, `SameSite=Lax`, 30일, https일 때 `Secure`가 모든 설정·삭제 경로에서 일관되는가.
+2. 계정 열거: 로그인에서 없는 이메일과 틀린 비밀번호의 응답 본문과 상태 코드가 같은가. 가입의 409 `email_taken`은 의도된 노출인지 스펙과 대조한다. 응답 시간 차이는 코드 구조로만 판단한다.
+3. 로그인 시도 제한: IP 판별 방식(프록시 뒤에서 헤더를 위조해 우회할 수 있는가), 15분·5회 기준, 미승인 403을 실패 횟수에 넣지 않는 동작, 24시간 정리 시점의 경쟁 상태.
+4. 서비스 키(service role) 사용 범위: 서버 코드 밖(클라이언트 번들, 응답 본문, 로그, 오류 메시지)으로 새는 경로가 있는가. `build/client` 번들 검색을 포함한다.
+5. 오류 처리: 처리하지 못한 예외가 500 `internal_error`로만 나가고 스택·내부 문구가 노출되지 않는가.
+6. 입력 검증: 이메일·비밀번호 형식, 본문 크기, JSON이 아닌 요청, 필드 누락의 처리.
+
+### F-2. 스펙·코드 대조
+
+1. `openspec/specs/auth/spec.md`의 요구사항과 시나리오를 실제 라우트의 상태 코드, 오류 코드, 응답 본문(`{id,email,zoteroConnected}`, `{status:"pending_approval"}`)과 하나씩 맞춰 본다.
+2. `docs/api/openapi.yaml`의 auth 경로(요청·응답·오류)가 구현과 일치하는지 본다. 빠진 응답 코드와 구현에만 있는 응답 코드를 나눠 적는다.
+3. `docs/dev/auth-test-map.md`의 대응표가 사실인지 본다. 표에 적힌 테스트 이름이 실제 파일에 있고, 그 테스트가 해당 시나리오를 정말 검증하는지(이름만 맞고 단정문이 약한 경우)를 가려낸다.
+4. 마이그레이션(`archi_profiles`, `archi_login_attempts`)과 코드가 쓰는 컬럼·제약이 일치하는지 본다.
+
+### F-3. 동시성과 경계 사례
+
+1. 만료 토큰 갱신: 같은 쿠키로 동시에 두 요청이 올 때(갱신 토큰 1회 사용 정책) 한쪽이 실패하거나 세션이 사라질 수 있는가. 통합 테스트가 이를 실제로 재현하는가.
+2. 로그아웃 뒤 쿠키 재사용 시 `me`가 401인지. 이 경로에서 한 번 500이 났고 `session.ts`의 거부 판정을 넓혀 고쳤다. 넓힌 판정이 서버 장애까지 401로 가리지 않는지 본다.
+3. 미승인 계정 로그인: 403 직전에 만든 Supabase 세션을 폐기하는데, 폐기가 실패하면 어떻게 되는가.
+4. 가입 중간 실패: 계정은 만들어졌는데 `archi_profiles` 삽입이 실패하면 롤백되는가(테스트가 있는지 포함).
+5. 쿠키 값이 깨졌거나 한쪽 토큰만 있거나 매우 긴 경우의 처리.
 
 ## 이미 알려진 사항(재보고 불필요, 의견은 환영)
 
 - `GET /api/auth/me`는 요청마다 `admin.getUserById`를 한 번 더 호출한다.
-- 승인을 취소해도 이미 발급된 세션은 최대 30일 유지된다.
+- 세션은 활동 기준으로 마지막 요청 후 30일 유지되고, 갱신 때마다 쿠키 기간이 다시 30일이 된다. 보호 요청마다 승인 여부를 확인하는 수정(archi-studio-review-fixes)이 반영된 뒤에는 승인 취소가 즉시 적용된다.
 - "다른 사용자의 자원 → 404" 시나리오는 papers change에서 검증한다.
 - Node 20에서 전역 `WebSocket`이 없어 `supabase-options.ts`로 우회했다.
 - 스크린샷 검증은 이 서버에 폰트가 없어 글자 없이 영역과 색만 눈으로 확인했다.

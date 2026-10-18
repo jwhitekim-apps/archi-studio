@@ -6,6 +6,11 @@ info:
     Archi Studio의 HTTP API 계약. 근거는 `openspec/changes/archi-studio-api-spec`의 스펙 7개와 design.md다.
     모든 경로는 `/api/...` 아래에 있고, 논문은 앱 내부 UUID `id`로 가리킨다.
     translation, paper-analysis, briefing은 요약 수준이며 세부 필드는 구현 전에 보완한다.
+
+    공통 규칙:
+    - 공개 경로는 `GET /api/health`, `POST /api/auth/signup`, `POST /api/auth/login`뿐이다. 그 밖의 `/api` 요청은 세션이 없으면 경로가 있든 없든 401 `unauthenticated`다.
+    - 세션은 활동 기준으로 마지막 요청 후 30일 유지된다. 요청 중 토큰이 갱신되면 쿠키 유효기간도 그 시점부터 다시 30일이 된다. 승인 여부는 보호 요청마다 확인한다.
+    - 출처(Origin)가 다른 쓰기 요청(POST, PUT, PATCH, DELETE)은 403 `forbidden_origin`으로 거부하며 본문은 공통 오류 형식이다.
 servers:
   - url: /
 security:
@@ -20,6 +25,24 @@ tags:
   - name: briefing
 
 paths:
+  /api/health:
+    get:
+      tags: [auth]
+      summary: 상태 확인 (공개, 사용자·DB 정보 없음)
+      security: []
+      responses:
+        '200':
+          description: 서버가 응답한다. 사용자나 DB 정보는 담지 않는다.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+
   /api/auth/signup:
     post:
       tags: [auth]
@@ -45,13 +68,15 @@ paths:
                     const: pending_approval
         '400':
           $ref: '#/components/responses/InvalidRequest'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrigin'
         '409':
           $ref: '#/components/responses/EmailTaken'
 
   /api/auth/login:
     post:
       tags: [auth]
-      summary: 로그인 (httpOnly, SameSite=Lax 세션 쿠키, 30일)
+      summary: 로그인 (httpOnly, SameSite=Lax 세션 쿠키, 마지막 요청 후 30일)
       description: 같은 IP에서 15분 안에 5번 실패하면 이후 시도를 거부한다. 제한 상태는 서버 재시작 후에도 유지된다.
       security: []
       requestBody:
@@ -384,6 +409,8 @@ paths:
       description: |
         번역문을 `text/plain` 청크로 스트리밍한다(SSE 아님). 같은 사용자가 같은 `text`를 이미 번역했다면
         AI를 다시 호출하지 않고 저장된 결과를 같은 형식으로 스트리밍한다. 완료 후 이력에 저장한다.
+        같은 문장도 다른 논문에서 다시 요청하면 이력 행을 새로 만든다. 저장된 번역을 재사용하더라도
+        요청의 `paperId`가 그 `text`의 기존 이력에 없는 논문이면 그 논문의 이력 행을 하나 더 저장한다.
         `paperId`는 선택 값이다. 있으면 이력에 그 논문의 내부 `id`를 함께 저장하고(논문이 삭제되면 이 이력도 함께 삭제된다),
         없으면 논문과 무관하게 동작한다. 없는 논문이거나 다른 사용자의 논문이면 404 `paper_not_found`를 돌려주며 AI를 호출하지 않는다.
       requestBody:
@@ -626,12 +653,14 @@ components:
           format: uuid
         title:
           type: string
+          description: 저장된 제목이 null이면 빈 문자열 `""`로 돌려준다.
         authors:
           type: array
           items:
             type: string
         year:
           type: [integer, 'null']
+          description: 저장된 연도 문자열에서 처음 나오는 네 자리 숫자를 정수로 돌려준다. 없거나 비어 있으면 null이다.
         collections:
           type: array
           items:
@@ -694,6 +723,7 @@ components:
         id:
           type: string
           format: uuid
+          description: 이력 행의 id. 저장소의 `archi_translations.id`도 uuid다.
         sourceText:
           type: string
         translatedText:
@@ -762,6 +792,12 @@ components:
             $ref: '#/components/schemas/Error'
     InvalidCredentials:
       description: 401 `invalid_credentials`. 이메일이 없는 경우와 비밀번호가 틀린 경우를 구분하지 않는다.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ForbiddenOrigin:
+      description: 403 `forbidden_origin`. 출처(Origin)가 다른 쓰기 요청. 프레임워크의 일반 텍스트 응답이 아니라 공통 오류 형식으로 돌려준다.
       content:
         application/json:
           schema:
