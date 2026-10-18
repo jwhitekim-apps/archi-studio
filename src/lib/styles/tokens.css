@@ -1,0 +1,100 @@
+/*
+ * 통합 디자인 토큰. 값의 출처와 채택 이유는 docs/design/token-map.md.
+ * 색과 그림자는 라이트/다크 쌍으로 정의하고, 나머지는 테마와 무관한 공통 값이다.
+ * 두 테마의 토큰 이름은 scripts/check-tokens.mjs가 비교한다.
+ */
+
+/* @common */
+:root {
+	--font-sans: 'Pretendard Variable', Pretendard, Roboto, 'Apple SD Gothic Neo', 'Noto Sans KR',
+		'Malgun Gothic', sans-serif;
+	--font-serif: 'Maru Buri', 'Noto Serif KR', serif;
+	--font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+	--fs-10: 10px;
+	--fs-11: 11px;
+	--fs-12: 12px;
+	--fs-13: 13px;
+	--fs-14: 14px;
+	--fs-15: 15px;
+	--fs-16: 16px;
+	--fs-18: 18px;
+	--fs-22: 22px;
+
+	--fw-400: 400;
+	--fw-500: 500;
+	--fw-600: 600;
+	--fw-650: 650;
+	--fw-700: 700;
+	--fw-800: 800;
+
+	--lh-tight: 1.4;
+	--lh-normal: 1.5;
+	--lh-relaxed: 1.55;
+
+	--space-xs: 4px;
+	--space-sm: 8px;
+	--space-md: 12px;
+	--space-lg: 16px;
+	--space-xl: 24px;
+	--space-2xl: 40px;
+	--gutter: 24px;
+	--section-gap: 20px;
+
+	--radius-sm: 8px;
+	--radius-md: 10px;
+	--radius-lg: 12px;
+	--radius-pill: 9999px;
+
+	--header-h: 56px;
+	--sidebar-w: 240px;
+	--sidebar-w-mini: 72px;
+	--panel-w: 320px;
+	--control-h: 44px;
+	--read-w: 960px;
+	--content-w: 1440px;
+	--min-w: 320px;
+	--breakpoint-narrow: 768px;
+}
+
+/* @light */
+:root {
+	--color-canvas: #f6f7f4;
+	--color-surface: #ffffff;
+	--color-well: #f0f2ee;
+	--color-hover: #e5e9e3;
+	--color-text: #1d2421;
+	--color-text-muted: #626b66;
+	--color-text-faint: #929a95;
+	--color-accent: #12876a;
+	--color-accent-hover: #0f6f58;
+	--color-accent-soft: #cfe6da;
+	--color-border: #cfd3cd;
+	--color-border-strong: #b9bfb7;
+	--color-error: #c0392b;
+	--color-error-soft: #fbe9e6;
+	--shadow-card: 0 2px 8px rgba(24, 25, 48, 0.07), 0 1px 2px rgba(24, 25, 48, 0.05);
+	--shadow-popover: 0 18px 48px rgba(29, 36, 33, 0.16);
+}
+
+/* @dark */
+@media (prefers-color-scheme: dark) {
+	:root {
+		--color-canvas: #121815;
+		--color-surface: #1a221e;
+		--color-well: #232d28;
+		--color-hover: #2c3832;
+		--color-text: #e8efeb;
+		--color-text-muted: #a9b6af;
+		--color-text-faint: #7f8d86;
+		--color-accent: #3fb08f;
+		--color-accent-hover: #5cc7a6;
+		--color-accent-soft: #1f3a31;
+		--color-border: #34413a;
+		--color-border-strong: #46554c;
+		--color-error: #e5776b;
+		--color-error-soft: #3a1f1c;
+		--shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+		--shadow-popover: 0 18px 48px rgba(0, 0, 0, 0.5);
+	}
+}
