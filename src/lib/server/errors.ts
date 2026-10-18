@@ -6,6 +6,7 @@ export const STANDARD_ERRORS = {
 	not_found: { status: 404, message: '요청한 경로를 찾을 수 없습니다.' },
 	method_not_allowed: { status: 405, message: '이 경로에서 지원하지 않는 메서드입니다.' },
 	unauthenticated: { status: 401, message: '로그인이 필요합니다.' },
+	forbidden_origin: { status: 403, message: '허용되지 않은 출처의 요청입니다.' },
 	internal_error: { status: 500, message: '서버에서 오류가 발생했습니다.' }
 } as const;
 

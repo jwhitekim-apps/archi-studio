@@ -13,14 +13,27 @@ const verify: SessionVerifier = async (token) => {
 	return null;
 };
 
-function run(path: string, opts: { method?: string; cookie?: string; resolve?: Resolve } = {}) {
+function run(
+	path: string,
+	opts: {
+		method?: string;
+		cookie?: string;
+		resolve?: Resolve;
+		headers?: Record<string, string>;
+		body?: string;
+	} = {}
+) {
 	const handle = createApiHandle({ verify });
 	const locals: { user: { id: string } | null } = { user: null };
 	const resolve = vi.fn(opts.resolve ?? (() => new Response('ok')));
 	const setCookie = vi.fn();
 	const event = {
 		url: new URL(`http://localhost${path}`),
-		request: new Request(`http://localhost${path}`, { method: opts.method ?? 'GET' }),
+		request: new Request(`http://localhost${path}`, {
+			method: opts.method ?? 'GET',
+			headers: opts.headers,
+			body: opts.body
+		}),
 		cookies: {
 			get: (name: string) => (name === 'archi_session' ? opts.cookie : undefined),
 			set: setCookie
@@ -198,5 +211,162 @@ describe('3.3 GET /api/health', () => {
 	it('공개 목록은 메서드까지 일치해야 한다 (쿠키 없는 POST는 401)', async () => {
 		const { res } = run('/api/health', { method: 'POST' });
 		expect((await res).status).toBe(401);
+	});
+});
+
+describe('1.1 퍼센트 인코딩된 경로로 보호를 우회할 수 없다', () => {
+	it('인코딩된 /api 경로도 쿠키 없이는 401이고 라우트는 호출되지 않는다', async () => {
+		for (const [method, path] of [
+			['POST', '/%61pi/auth/logout'],
+			['GET', '/%61pi/papers'],
+			['GET', '/%61%70%69/papers'],
+			['GET', '/api/%70apers']
+		] as const) {
+			const { res, resolve } = run(path, { method });
+			const r = await res;
+			expect(r.status, `${method} ${path}`).toBe(401);
+			expect((await r.json()).error.code).toBe('unauthenticated');
+			expect(resolve, `${method} ${path}`).not.toHaveBeenCalled();
+		}
+	});
+
+	it('디코딩에 실패하는 /api 경로는 쿠키 없이 401이다', async () => {
+		const { res, resolve } = run('/api/%E0%A4%A');
+		const r = await res;
+		expect(r.status).toBe(401);
+		expect((await r.json()).error.code).toBe('unauthenticated');
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('디코딩하면 공개 경로인 요청은 공개 경로로 판정한다', async () => {
+		const { res, resolve } = run('/api/%68ealth', { resolve: healthOk });
+		const r = await res;
+		expect(r.status).toBe(200);
+		expect(await r.json()).toEqual({ status: 'ok' });
+		expect(resolve).toHaveBeenCalledOnce();
+	});
+
+	it('%25는 라우터처럼 그대로 두어 /api%2Fhealth 같은 값이 공개 경로로 오인되지 않는다', async () => {
+		const { res, resolve } = run('/api%2Fhealth');
+		// /api%2Fhealth는 /api 아래 경로가 아니므로 프레임워크가 처리한다(보호 대상이 아니다).
+		expect((await res).status).toBe(200);
+		expect(resolve).toHaveBeenCalledOnce();
+		const nested = run('/api/%25/health');
+		expect((await nested.res).status).toBe(401);
+	});
+
+	it('/api가 아닌 일반 경로는 인코딩돼 있어도 그대로 통과한다', async () => {
+		const { res, resolve } = run('/%EB%A1%9C%EA%B7%B8%EC%9D%B8');
+		expect((await res).status).toBe(200);
+		expect(resolve).toHaveBeenCalledOnce();
+	});
+});
+
+describe('2.2 CSRF: 다른 출처의 폼 형식 쓰기 요청', () => {
+	const FORM = 'application/x-www-form-urlencoded';
+	const EVIL = 'http://evil.example';
+	const SAME = 'http://localhost';
+
+	async function post(
+		path: string,
+		opts: { method?: string; origin?: string | null; type?: string | null; accept?: string } = {}
+	) {
+		const headers: Record<string, string> = {};
+		if (opts.origin) headers.origin = opts.origin;
+		if (opts.type) headers['content-type'] = opts.type;
+		if (opts.accept) headers.accept = opts.accept;
+		const method = opts.method ?? 'POST';
+		const r = run(path, { method, headers, body: ['GET', 'HEAD'].includes(method) ? undefined : 'a=1' });
+		return { ...r, response: await r.res };
+	}
+
+	it('다른 출처 + 폼 형식 + /api: 403 forbidden_origin JSON, 라우트 미실행, 표시 헤더 없음', async () => {
+		const { response, resolve } = await post('/api/auth/login', { origin: EVIL, type: FORM });
+		expect(response.status).toBe(403);
+		expect(response.headers.get('content-type')).toContain('application/json');
+		expect(response.headers.get('x-archi-error')).toBeNull();
+		expect((await response.json()).error.code).toBe('forbidden_origin');
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('Origin 헤더가 없는 폼 형식 쓰기도 막는다 (프레임워크와 같음)', async () => {
+		const { response, resolve } = await post('/api/auth/login', { origin: null, type: FORM });
+		expect(response.status).toBe(403);
+		expect((await response.json()).error.code).toBe('forbidden_origin');
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('같은 출처 + 폼 형식은 통과한다', async () => {
+		const { response, resolve } = await post('/api/auth/login', { origin: SAME, type: FORM });
+		expect(response.status).toBe(200);
+		expect(resolve).toHaveBeenCalledOnce();
+	});
+
+	it('JSON 본문은 출처가 달라도, 없어도 통과한다 (프레임워크와 같음)', async () => {
+		for (const origin of [EVIL, null]) {
+			const { response, resolve } = await post('/api/auth/login', {
+				origin,
+				type: 'application/json'
+			});
+			expect(response.status).toBe(200);
+			expect(resolve).toHaveBeenCalledOnce();
+		}
+	});
+
+	it('본문과 Content-Type이 없는 요청은 폼이 아니므로 통과한다', async () => {
+		const r = run('/api/auth/login', { method: 'POST', headers: { origin: EVIL } });
+		expect((await r.res).status).toBe(200);
+		expect(r.resolve).toHaveBeenCalledOnce();
+	});
+
+	it('폼으로 취급하는 모든 Content-Type을 막는다 (대소문자와 매개변수 포함)', async () => {
+		for (const type of [
+			'application/x-www-form-urlencoded',
+			'APPLICATION/X-WWW-FORM-URLENCODED; charset=UTF-8',
+			'multipart/form-data; boundary=x',
+			'text/plain',
+			'application/x-sveltekit-formdata'
+		]) {
+			const { response, resolve } = await post('/api/auth/login', { origin: EVIL, type });
+			expect(response.status, type).toBe(403);
+			expect(resolve, type).not.toHaveBeenCalled();
+		}
+	});
+
+	it('쓰기 메서드(POST, PUT, PATCH, DELETE)만 막고 GET과 HEAD는 통과한다', async () => {
+		for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+			const { response } = await post('/api/papers/1', { method, origin: EVIL, type: FORM });
+			expect(response.status, method).toBe(403);
+			expect((await response.json()).error.code, method).toBe('forbidden_origin');
+		}
+		for (const method of ['GET', 'HEAD']) {
+			const { response } = await post('/api/health', { method, origin: EVIL, type: FORM });
+			expect(response.status, method).not.toBe(403);
+		}
+	});
+
+	it('CSRF 거부는 인증 검사보다 먼저다 (쿠키 없이도 403)', async () => {
+		const { response } = await post('/api/papers', { origin: EVIL, type: FORM });
+		expect(response.status).toBe(403);
+	});
+
+	it('/api가 아닌 경로는 지금처럼 일반 텍스트 403이고, Accept가 JSON이면 { message } JSON이다', async () => {
+		const plain = await post('/login', { origin: EVIL, type: FORM });
+		expect(plain.response.status).toBe(403);
+		expect(plain.response.headers.get('content-type')).toContain('text/plain');
+		expect(await plain.response.text()).toBe('Cross-site POST form submissions are forbidden');
+		expect(plain.resolve).not.toHaveBeenCalled();
+
+		const json = await post('/login', { origin: EVIL, type: FORM, accept: 'application/json' });
+		expect(json.response.status).toBe(403);
+		expect(await json.response.json()).toEqual({
+			message: 'Cross-site POST form submissions are forbidden'
+		});
+	});
+
+	it('인코딩된 /api 경로로 보내도 같은 거부가 적용된다', async () => {
+		const { response } = await post('/%61pi/auth/login', { origin: EVIL, type: FORM });
+		expect(response.status).toBe(403);
+		expect((await response.json()).error.code).toBe('forbidden_origin');
 	});
 });

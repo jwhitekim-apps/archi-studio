@@ -1,7 +1,7 @@
 // 로컬 Supabase(npm run db:start)가 떠 있어야 하는 통합 테스트. 실행: npm run test:auth
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createSessionVerifier } from './session';
+import { createSessionVerifier, isUserApproved } from './session';
 import { supabaseClientOptions as options } from './supabase-options';
 import { decodeSessionTokens, encodeSessionTokens } from './session-cookie';
 
@@ -13,7 +13,9 @@ const jwtSecret: string = env.SUPABASE_JWT_SECRET;
 
 const anon = (): SupabaseClient => createClient(url, anonKey, options);
 const admin = createClient(url, serviceKey, options);
-const verify = createSessionVerifier(anon);
+// 이 파일은 토큰 처리(유효, 만료 갱신, 위조)를 본다. 실제 승인 확인(archi_profiles)을 쓰고, 테스트 계정은 승인 행을 만들어 둔다.
+// 미승인 토큰과 승인 취소는 auth.integration.ts에서 본다.
+const verify = createSessionVerifier(anon, isUserApproved);
 
 const email = `session-it-${Date.now()}@example.test`;
 const password = 'password-ok-1';
@@ -54,6 +56,8 @@ beforeAll(async () => {
 	const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
 	if (error || !data.user) throw error ?? new Error('테스트 계정 생성 실패');
 	userId = data.user.id;
+	const profile = await admin.from('archi_profiles').insert({ user_id: userId, approved: true });
+	if (profile.error) throw profile.error;
 });
 
 afterAll(async () => {

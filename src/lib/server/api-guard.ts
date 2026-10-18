@@ -1,4 +1,5 @@
 import type { Handle } from '@sveltejs/kit';
+import { csrfRejection } from './csrf';
 import { ERROR_MARKER_HEADER, standardError } from './errors';
 import { SESSION_COOKIE, type SessionVerifier } from './session';
 import { sessionCookieOptions } from './session-cookie';
@@ -17,16 +18,33 @@ export interface ApiGuardOptions {
 
 const isApiPath = (pathname: string) => pathname === '/api' || pathname.startsWith('/api/');
 
+// SvelteKit 라우터가 라우트를 찾을 때 쓰는 경로와 같은 표현(퍼센트 인코딩을 풀고 %25는 그대로 둔다).
+// 인코딩된 원문(/%61pi/...)으로 판정하면 라우터는 /api/...로 연결하는데 가드는 보호 대상이 아니라고 보게 된다.
+// 디코딩에 실패하면 null이고, 프레임워크도 같은 이유로 400을 돌려 라우트를 실행하지 않는다.
+export function routePath(url: URL): string | null {
+	try {
+		return url.pathname.split('%25').map(decodeURI).join('%25');
+	} catch {
+		return null;
+	}
+}
+
 export function createApiHandle({
 	verify,
 	publicRoutes = PUBLIC_API_ROUTES
 }: ApiGuardOptions): Handle {
 	return async ({ event, resolve }) => {
 		event.locals.user = null;
-		if (!isApiPath(event.url.pathname)) return resolve(event);
+		const path = routePath(event.url);
+		// 디코딩에 실패한 경로는 원문이 /api로 시작하면 보호 대상으로 본다(공개 경로일 수 없다).
+		const isApi = isApiPath(path ?? event.url.pathname);
+
+		const forbidden = csrfRejection(event, isApi);
+		if (forbidden) return forbidden;
+		if (!isApi) return resolve(event);
 
 		try {
-			const isPublic = publicRoutes.has(`${event.request.method} ${event.url.pathname}`);
+			const isPublic = path !== null && publicRoutes.has(`${event.request.method} ${path}`);
 			if (!isPublic) {
 				const token = event.cookies.get(SESSION_COOKIE);
 				const session = token ? await verify(token) : null;
