@@ -1,0 +1,24 @@
+node_modules
+
+# Output
+.output
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env (실제 키는 저장소에 두지 않는다)
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Supabase 로컬 개발 임시 파일
+/supabase/.temp
+/supabase/.branches
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
