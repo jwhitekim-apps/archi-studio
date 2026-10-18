@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { login, signup, type AuthDeps } from './auth-service';
 import { Browser } from './auth-harness';
 import { createLoginAttempts } from './login-attempts';
-import { decodeSessionTokens } from './session-cookie';
+import { decodeSessionTokens, encodeSessionTokens } from './session-cookie';
 import { supabaseClientOptions as options } from './supabase-options';
 
 const env = import.meta.env;
@@ -143,13 +143,14 @@ describe('3.2 로그인 시도 제한', () => {
 		expect(await createLoginAttempts(admin).isLimited(ip)).toBe(true);
 	});
 
-	it('실패를 기록할 때 24시간 지난 행이 지워진다', async () => {
+	it('예약할 때 24시간 지난 행이 지워진다', async () => {
 		const ip = freshIp();
 		const old = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
 		const seeded = await admin.from('archi_login_attempts').insert({ ip, attempted_at: old });
 		expect(seeded.error).toBeNull();
 
-		await createLoginAttempts(admin).recordFailure(ip);
+		const id = await createLoginAttempts(admin).reserve(ip);
+		expect(id).not.toBeNull();
 
 		const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 		const stale = await admin
@@ -163,6 +164,57 @@ describe('3.2 로그인 시도 제한', () => {
 			.select('id', { count: 'exact', head: true })
 			.eq('ip', ip);
 		expect(fresh.count).toBe(1);
+	});
+
+	it('같은 IP의 틀린 로그인 8건이 동시에 와도 401은 5건, 나머지 3건은 429', async () => {
+		const ip = freshIp();
+		const results = await Promise.all(
+			Array.from({ length: 8 }, () =>
+				new Browser(ip).request('POST', '/api/auth/login', { email: approved.email, password: 'wrong-pass-1' })
+			)
+		);
+		const statuses = results.map((r) => r.status).sort();
+		expect(statuses.filter((s) => s === 401)).toHaveLength(5);
+		expect(statuses.filter((s) => s === 429)).toHaveLength(3);
+		const rows = await admin
+			.from('archi_login_attempts')
+			.select('id', { count: 'exact', head: true })
+			.eq('ip', ip);
+		expect(rows.count).toBe(5);
+	});
+
+	it('실패 4번 뒤 성공한 로그인은 횟수를 늘리지 않는다', async () => {
+		const ip = freshIp();
+		const b = new Browser(ip);
+		for (let i = 0; i < 4; i++) {
+			const res = await b.request('POST', '/api/auth/login', { email: approved.email, password: 'wrong-pass-1' });
+			expect(res.status).toBe(401);
+		}
+		const ok = await b.request('POST', '/api/auth/login', { email: approved.email, password });
+		expect(ok.status).toBe(200);
+		const rows = await admin
+			.from('archi_login_attempts')
+			.select('id', { count: 'exact', head: true })
+			.eq('ip', ip);
+		expect(rows.count).toBe(4);
+		// 성공이 자리를 먹지 않았으니 다섯 번째 실패는 아직 401이고, 그다음이 429다.
+		const fifth = await b.request('POST', '/api/auth/login', { email: approved.email, password: 'wrong-pass-1' });
+		expect(fifth.status).toBe(401);
+		const sixth = await b.request('POST', '/api/auth/login', { email: approved.email, password });
+		expect(sixth.status).toBe(429);
+	});
+
+	it('release는 예약 행을 지운다', async () => {
+		const ip = freshIp();
+		const attempts = createLoginAttempts(admin);
+		const id = await attempts.reserve(ip);
+		expect(id).not.toBeNull();
+		await attempts.release(id as number);
+		const rows = await admin
+			.from('archi_login_attempts')
+			.select('id', { count: 'exact', head: true })
+			.eq('ip', ip);
+		expect(rows.count).toBe(0);
 	});
 });
 
@@ -302,5 +354,53 @@ describe('3.5 GET /api/auth/me', () => {
 		const res = await new Browser(freshIp()).request('GET', '/api/auth/me');
 		expect(res.status).toBe(401);
 		expect(res.body).toMatchObject({ error: { code: 'unauthenticated' } });
+	});
+});
+
+describe('1.4 직접 발급받은 Supabase 토큰과 승인 확인', () => {
+	it('미승인 계정이 직접 받은 토큰은 401, 승인하면 200, 승인을 취소하면 다음 요청부터 401', async () => {
+		const direct = await createUser('direct-token', false);
+		// 앱의 로그인(403 pending_approval)을 거치지 않고 Supabase 비밀번호 로그인으로 토큰 쌍을 받는다.
+		const { data, error } = await anon().auth.signInWithPassword({ email: direct.email, password });
+		if (error || !data.session) throw error ?? new Error('세션 없음');
+		const b = new Browser(freshIp());
+		b.jar.set(
+			SESSION_COOKIE,
+			encodeSessionTokens({ accessToken: data.session.access_token, refreshToken: data.session.refresh_token })
+		);
+
+		const setApproved = async (value: boolean) => {
+			const res = await admin.from('archi_profiles').update({ approved: value }).eq('user_id', direct.id);
+			expect(res.error).toBeNull();
+		};
+
+		const before = await b.request('GET', '/api/auth/me');
+		expect(before.status).toBe(401);
+		expect(before.body).toMatchObject({ error: { code: 'unauthenticated' } });
+
+		await setApproved(true);
+		const approvedRes = await b.request('GET', '/api/auth/me');
+		expect(approvedRes.status).toBe(200);
+		expect(approvedRes.body).toMatchObject({ id: direct.id, email: direct.email });
+
+		await setApproved(false);
+		const revoked = await b.request('GET', '/api/auth/me');
+		expect(revoked.status).toBe(401);
+		expect(revoked.body).toMatchObject({ error: { code: 'unauthenticated' } });
+	});
+
+	it('승인 행이 없는 계정의 토큰도 401', async () => {
+		const email = mkEmail('no-profile');
+		const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+		if (created.error || !created.data.user) throw created.error ?? new Error('테스트 계정 생성 실패');
+		const { data, error } = await anon().auth.signInWithPassword({ email, password });
+		if (error || !data.session) throw error ?? new Error('세션 없음');
+		const b = new Browser(freshIp());
+		b.jar.set(
+			SESSION_COOKIE,
+			encodeSessionTokens({ accessToken: data.session.access_token, refreshToken: data.session.refresh_token })
+		);
+		const res = await b.request('GET', '/api/auth/me');
+		expect(res.status).toBe(401);
 	});
 });

@@ -93,46 +93,58 @@ export interface LoginResult {
 	tokens?: SessionTokens;
 }
 
-// 순서: 제한 확인, 자격 증명, 승인 확인.
+// 순서: 시도 예약(제한 확인), 자격 증명, 승인 확인.
+// 예약은 실패한 로그인에서만 유지된다(실패로 센다). 성공, 미승인 403, 예외에서는 지운다.
 export async function login(deps: AuthDeps, { email, password }: Credentials, ip: string): Promise<LoginResult> {
 	const attempts = createLoginAttempts(deps.admin);
-	if (await attempts.isLimited(ip)) {
+	const reservation = await attempts.reserve(ip);
+	if (reservation === null) {
 		return {
 			response: errorResponse(429, 'too_many_attempts', '로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.')
 		};
 	}
 
-	const { data, error } = await deps.anon().auth.signInWithPassword({ email, password });
-	if (error) {
-		// 이메일이 없는 경우와 비밀번호가 틀린 경우를 구분하지 않는다.
-		if (isAuthError(error) && (error.code === 'invalid_credentials' || error.status === 400)) {
-			await attempts.recordFailure(ip);
-			return { response: errorResponse(401, 'invalid_credentials', '이메일 또는 비밀번호가 올바르지 않습니다.') };
+	let failed = false;
+	try {
+		const { data, error } = await deps.anon().auth.signInWithPassword({ email, password });
+		if (error) {
+			// 이메일이 없는 경우와 비밀번호가 틀린 경우를 구분하지 않는다.
+			if (isAuthError(error) && (error.code === 'invalid_credentials' || error.status === 400)) {
+				failed = true;
+				return { response: errorResponse(401, 'invalid_credentials', '이메일 또는 비밀번호가 올바르지 않습니다.') };
+			}
+			throw error;
 		}
-		throw error;
-	}
 
-	const { data: profile, error: profileError } = await deps.admin
-		.from('archi_profiles')
-		.select('approved')
-		.eq('user_id', data.user.id)
-		.maybeSingle();
-	if (profileError) throw profileError;
-	if (!profile?.approved) {
-		// 방금 만든 Supabase 세션을 바로 폐기한다. 쿠키는 설정하지 않고, 실패 횟수에도 넣지 않는다.
-		const revoked = await deps.admin.auth.admin.signOut(data.session.access_token, 'local');
-		if (revoked.error) throw revoked.error;
-		return { response: errorResponse(403, 'pending_approval', '관리자 승인을 기다리는 계정입니다.') };
-	}
+		const { data: profile, error: profileError } = await deps.admin
+			.from('archi_profiles')
+			.select('approved')
+			.eq('user_id', data.user.id)
+			.maybeSingle();
+		if (profileError) throw profileError;
+		if (!profile?.approved) {
+			// 방금 만든 Supabase 세션을 바로 폐기한다. 쿠키는 설정하지 않고, 실패 횟수에도 넣지 않는다.
+			const revoked = await deps.admin.auth.admin.signOut(data.session.access_token, 'local');
+			if (revoked.error) throw revoked.error;
+			return { response: errorResponse(403, 'pending_approval', '관리자 승인을 기다리는 계정입니다.') };
+		}
 
-	return {
-		response: jsonResponse(200, {
-			id: data.user.id,
-			email: data.user.email,
-			zoteroConnected: await zoteroConnected(deps.admin, data.user.id)
-		}),
-		tokens: { accessToken: data.session.access_token, refreshToken: data.session.refresh_token }
-	};
+		return {
+			response: jsonResponse(200, {
+				id: data.user.id,
+				email: data.user.email,
+				zoteroConnected: await zoteroConnected(deps.admin, data.user.id)
+			}),
+			tokens: { accessToken: data.session.access_token, refreshToken: data.session.refresh_token }
+		};
+	} finally {
+		if (!failed) {
+			// 지우지 못하면 이 시도가 실패로 남아 제한 쪽(닫히는 쪽)으로 기운다. 로그인 결과는 바꾸지 않는다.
+			await attempts.release(reservation).catch((err) => {
+				console.error('[auth] release login attempt failed', err instanceof Error ? err.name : 'unknown');
+			});
+		}
+	}
 }
 
 // 현재 세션을 Supabase에서 끊는다. 쿠키 삭제는 라우트가 한다.
