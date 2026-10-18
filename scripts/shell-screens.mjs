@@ -20,6 +20,27 @@ for (const scheme of ['light', 'dark']) {
 	});
 	const page = await context.newPage();
 	await page.goto(url);
+	await page.waitForLoadState('networkidle');
+
+	// 클라이언트 연결(하이드레이션)이 끝나기 전의 클릭은 무시될 수 있다.
+	// 열림 상태(aria-expanded)가 될 때까지 다시 누른다.
+	const pressUntilExpanded = async (name) => {
+		const button = page.getByRole('button', { name });
+		for (let i = 0; i < 6; i++) {
+			await button.click();
+			try {
+				await page.waitForFunction(
+					(label) =>
+						document.querySelector(`[aria-label="${label}"]`)?.getAttribute('aria-expanded') === 'true',
+					name,
+					{ timeout: 1500 }
+				);
+				return;
+			} catch {
+				await page.waitForTimeout(500);
+			}
+		}
+	};
 
 	// 1280px: 세 영역이 모두 보이는지
 	const visible = async (sel) => (await page.locator(sel).first().isVisible());
@@ -47,16 +68,66 @@ for (const scheme of ['light', 'dark']) {
 	report(overflow <= 0, `${scheme} 390 가로 스크롤 없음 (넘침 ${overflow}px)`);
 	await page.screenshot({ path: `${outDir}/${scheme}-390.png` });
 
-	await page.getByRole('button', { name: '메뉴 열기' }).click();
+	// 포커스 검사용 도우미: 지금 포커스가 선택자 안에 있는지, 어느 열기 버튼인지
+	const activeIn = (sel) => page.evaluate((s) => !!document.activeElement?.closest(s), sel);
+	const activeLabel = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '');
+	// 배경(.work)에 포커스를 줄 수 있는 요소를 하나 심어 inert 가 막는지 본다
+	await page.evaluate(() => {
+		const probe = document.createElement('button');
+		probe.id = 'focus-probe';
+		probe.textContent = 'probe';
+		document.querySelector('.work')?.append(probe);
+	});
+	const probeFocusable = () =>
+		page.evaluate(() => {
+			const probe = document.getElementById('focus-probe');
+			probe?.focus();
+			return document.activeElement === probe;
+		});
+
+	// 접힌 상태: 탭 순서에 두 패널이 들어오지 않는다
+	await page.evaluate(() => document.body.focus());
+	let strayInCollapsed = false;
+	for (let i = 0; i < 6; i++) {
+		await page.keyboard.press('Tab');
+		if (await activeIn('.menu, .panel')) strayInCollapsed = true;
+	}
+	report(!strayInCollapsed, `${scheme} 390 접힌 패널은 탭 순서에 없음`);
+	await page.evaluate(() => document.activeElement?.blur());
+	report(await probeFocusable(), `${scheme} 390 닫힌 동안 본문 요소는 포커스 가능(검사 도구 확인)`);
+	await page.evaluate(() => document.activeElement?.blur());
+
+	await pressUntilExpanded('메뉴 열기');
 	report(await visible('.menu'), `${scheme} 390 메뉴 버튼으로 열림`);
+	report(await activeIn('.menu'), `${scheme} 390 메뉴 열기 → 포커스가 메뉴 안`);
+	report(!(await probeFocusable()), `${scheme} 390 메뉴 열린 동안 배경 요소에 포커스 불가`);
 	await page.screenshot({ path: `${outDir}/${scheme}-390-menu.png` });
 
-	await page.getByRole('button', { name: '설정 열기' }).click();
+	// 안쪽 닫기 버튼 → 열기 버튼으로 복귀
+	await page.locator('.menu .overlay-close').click();
+	report(!(await visible('.menu')) && (await activeLabel()) === '메뉴 열기', `${scheme} 390 메뉴 닫기 버튼 → 메뉴 열기 버튼으로 복귀`);
+
+	// 배경 면(scrim) 클릭 → 열기 버튼으로 복귀
+	await pressUntilExpanded('메뉴 열기');
+	await page.mouse.click(385, 700);
+	report(!(await visible('.menu')) && (await activeLabel()) === '메뉴 열기', `${scheme} 390 배경 면 클릭 → 메뉴 열기 버튼으로 복귀`);
+
+	await pressUntilExpanded('설정 열기');
 	report((await visible('.panel')) && !(await visible('.menu')), `${scheme} 390 설정 버튼으로 열림`);
+	report(await activeIn('.panel'), `${scheme} 390 설정 열기 → 포커스가 패널 안`);
+	report(!(await probeFocusable()), `${scheme} 390 설정 열린 동안 배경 요소에 포커스 불가`);
 	await page.screenshot({ path: `${outDir}/${scheme}-390-panel.png` });
 
 	await page.keyboard.press('Escape');
 	report(!(await visible('.panel')), `${scheme} 390 Escape로 닫힘`);
+	report((await activeLabel()) === '설정 열기', `${scheme} 390 Escape → 설정 열기 버튼으로 복귀`);
+
+	// 닫힌 뒤에는 배경 요소가 다시 포커스 가능
+	report(await probeFocusable(), `${scheme} 390 닫힌 뒤 배경 요소 포커스 복구`);
+
+	// 넓은 화면에서는 안쪽 닫기 버튼이 보이지 않는다
+	await page.setViewportSize({ width: 1280, height: 800 });
+	report(!(await visible('.overlay-close')), `${scheme} 1280 안쪽 닫기 버튼 숨김`);
 
 	await context.close();
 }
