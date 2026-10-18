@@ -14,7 +14,8 @@
 		"db:start": "supabase start",
 		"db:stop": "supabase stop",
 		"db:reset": "supabase db reset",
-		"test": "vitest run"
+		"test": "vitest run",
+		"test:auth": "vitest run --config vitest.auth.config.ts"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.5.7",
@@ -27,5 +28,8 @@
 		"typescript": "^5.9.0",
 		"vite": "^7.0.0",
 		"vitest": "^3.2.7"
+	},
+	"dependencies": {
+		"@supabase/supabase-js": "^2.109.0"
 	}
 }

@@ -7,7 +7,8 @@ type Resolve = (event: unknown) => Response | Promise<Response>;
 
 // 가짜 세션 검증: 'good'만 유효, 'expired'와 위조 값은 null, 'boom'은 서버 장애.
 const verify: SessionVerifier = async (token) => {
-	if (token === 'good') return { id: 'user-1' };
+	if (token === 'good') return { user: { id: 'user-1' } };
+	if (token === 'renew') return { user: { id: 'user-1' }, renewedToken: 'new-token' };
 	if (token === 'boom') throw new Error('db down: password=secret');
 	return null;
 };
@@ -16,15 +17,19 @@ function run(path: string, opts: { method?: string; cookie?: string; resolve?: R
 	const handle = createApiHandle({ verify });
 	const locals: { user: { id: string } | null } = { user: null };
 	const resolve = vi.fn(opts.resolve ?? (() => new Response('ok')));
+	const setCookie = vi.fn();
 	const event = {
 		url: new URL(`http://localhost${path}`),
 		request: new Request(`http://localhost${path}`, { method: opts.method ?? 'GET' }),
-		cookies: { get: (name: string) => (name === 'archi_session' ? opts.cookie : undefined) },
+		cookies: {
+			get: (name: string) => (name === 'archi_session' ? opts.cookie : undefined),
+			set: setCookie
+		},
 		locals
 	};
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const res = (handle as any)({ event, resolve }) as Promise<Response>;
-	return { res, resolve, locals };
+	return { res, resolve, locals, setCookie };
 }
 
 const healthOk: Resolve = () =>
@@ -139,6 +144,44 @@ describe('3.2 세션 쿠키와 인증 차단', () => {
 	it('목록에 없는 새 /api 경로는 기본적으로 보호된다', async () => {
 		const { res } = run('/api/brand-new');
 		expect((await res).status).toBe(401);
+	});
+});
+
+describe('2.1 갱신된 세션 쿠키와 공개 경로', () => {
+	it('검증이 renewedToken을 돌려주면 archi_session 쿠키를 새 값과 속성으로 다시 설정한다', async () => {
+		const { res, resolve, setCookie } = run('/api/papers', { cookie: 'renew' });
+		const r = await res;
+		expect(r.status).toBe(200);
+		expect(resolve).toHaveBeenCalledOnce();
+		expect(setCookie).toHaveBeenCalledOnce();
+		expect(setCookie).toHaveBeenCalledWith('archi_session', 'new-token', {
+			path: '/',
+			httpOnly: true,
+			sameSite: 'lax',
+			secure: false,
+			maxAge: 30 * 24 * 60 * 60
+		});
+	});
+
+	it('갱신이 없으면 쿠키를 건드리지 않는다', async () => {
+		const { res, setCookie } = run('/api/papers', { cookie: 'good' });
+		await res;
+		expect(setCookie).not.toHaveBeenCalled();
+	});
+
+	it('가입과 로그인은 쿠키 없이 통과하고, 같은 경로의 다른 메서드는 막힌다', async () => {
+		for (const path of ['/api/auth/signup', '/api/auth/login']) {
+			const ok = run(path, { method: 'POST' });
+			expect((await ok.res).status).toBe(200);
+			expect(ok.resolve).toHaveBeenCalledOnce();
+			const blocked = run(path, { method: 'GET' });
+			expect((await blocked.res).status).toBe(401);
+		}
+	});
+
+	it('로그아웃과 me는 공개가 아니다', async () => {
+		expect((await run('/api/auth/me').res).status).toBe(401);
+		expect((await run('/api/auth/logout', { method: 'POST' }).res).status).toBe(401);
 	});
 });
 

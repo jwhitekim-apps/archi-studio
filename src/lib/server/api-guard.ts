@@ -1,9 +1,14 @@
 import type { Handle } from '@sveltejs/kit';
 import { ERROR_MARKER_HEADER, standardError } from './errors';
 import { SESSION_COOKIE, type SessionVerifier } from './session';
+import { sessionCookieOptions } from './session-cookie';
 
 // 공개 경로 허용 목록. 여기 없는 /api 경로는 기본적으로 보호된다.
-export const PUBLIC_API_ROUTES: ReadonlySet<string> = new Set(['GET /api/health']);
+export const PUBLIC_API_ROUTES: ReadonlySet<string> = new Set([
+	'GET /api/health',
+	'POST /api/auth/signup',
+	'POST /api/auth/login'
+]);
 
 export interface ApiGuardOptions {
 	verify: SessionVerifier;
@@ -24,9 +29,13 @@ export function createApiHandle({
 			const isPublic = publicRoutes.has(`${event.request.method} ${event.url.pathname}`);
 			if (!isPublic) {
 				const token = event.cookies.get(SESSION_COOKIE);
-				const user = token ? await verify(token) : null;
-				if (!user) return standardError('unauthenticated');
-				event.locals.user = user;
+				const session = token ? await verify(token) : null;
+				if (!session) return standardError('unauthenticated');
+				event.locals.user = session.user;
+				// 접근 토큰이 갱신됐으면 새 값으로 쿠키를 다시 설정한다(이후 오류 응답에도 실린다).
+				if (session.renewedToken) {
+					event.cookies.set(SESSION_COOKIE, session.renewedToken, sessionCookieOptions(event.url));
+				}
 			}
 
 			const res = await resolve(event);
