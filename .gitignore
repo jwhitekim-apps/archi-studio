@@ -13,7 +13,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
-!.env.test
 
 # Supabase 로컬 개발 임시 파일
 /supabase/.temp
