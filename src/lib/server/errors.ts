@@ -30,3 +30,8 @@ export function standardError(code: StandardErrorCode, headers: HeadersInit = {}
 	const { status, message } = STANDARD_ERRORS[code];
 	return errorResponse(status, code, message, headers);
 }
+
+// 없는 논문, 남의 논문, UUID가 아닌 id를 구분하지 않는다(존재 여부를 드러내지 않는다).
+export function paperNotFound(): Response {
+	return errorResponse(404, 'paper_not_found', '논문을 찾을 수 없습니다.');
+}

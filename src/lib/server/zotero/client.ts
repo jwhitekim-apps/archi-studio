@@ -1,4 +1,6 @@
-// Zotero Web API 읽기 호출. 폴리오 zotero.js의 읽기 함수를 옮겼다.
+import { randomUUID } from 'node:crypto';
+
+// Zotero Web API 호출(읽기, 그리고 첨부 파일·웹페이지 생성·삭제). 폴리오 zotero.js의 읽기 함수를 옮겼다.
 // 실패는 ZoteroUnavailableError로 통일한다. 키와 Zotero 응답 원문은 오류에 넣지 않는다.
 
 export interface ZoteroApi {
@@ -111,4 +113,69 @@ export async function fetchChildren(api: ZoteroApi, itemKey: string): Promise<Zo
 export async function fetchCollections(api: ZoteroApi): Promise<ZoteroItem[]> {
 	const { items } = await getAllPages(api, `${prefix(api)}/collections?format=json&limit=100`, '컬렉션 조회');
 	return items;
+}
+
+// 첨부 파일 원본 응답. 호출한 쪽이 본문을 스트림으로 전달한다. Zotero에 파일이 없으면 status 404의 오류다.
+export async function fetchAttachmentFile(api: ZoteroApi, attachmentKey: string): Promise<Response> {
+	return get(api, `${prefix(api)}/items/${attachmentKey}/file`, '첨부 파일 조회');
+}
+
+async function send(api: ZoteroApi, url: string, init: RequestInit, what: string): Promise<Response> {
+	try {
+		return await (api.fetch ?? fetch)(url, {
+			...init,
+			headers: { 'Zotero-API-Key': api.apiKey, 'Zotero-API-Version': '3', ...init.headers }
+		});
+	} catch {
+		throw new ZoteroUnavailableError(what, null);
+	}
+}
+
+// Zotero에 webpage 항목을 만든다. 쓰기 토큰은 같은 요청의 재전송을 막는다(5~32자).
+export async function createWebpageItem(
+	api: ZoteroApi,
+	{ url, title }: { url: string; title: string | null }
+): Promise<ZoteroItem> {
+	const what = '웹페이지 항목 생성';
+	const res = await send(
+		api,
+		`${prefix(api)}/items`,
+		{
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'Zotero-Write-Token': randomUUID().replace(/-/g, '') },
+			body: JSON.stringify([{ itemType: 'webpage', title: title || url, url, accessDate: new Date().toISOString() }])
+		},
+		what
+	);
+	if (!res.ok) {
+		await res.body?.cancel().catch(() => {});
+		throw new ZoteroUnavailableError(what, res.status);
+	}
+	const body = await json<{ successful?: Record<string, ZoteroItem> }>(res, what);
+	const created = body.successful?.['0'];
+	if (!created) throw new ZoteroUnavailableError(what, null);
+	return created;
+}
+
+export class ZoteroVersionConflictError extends Error {
+	constructor() {
+		super('Zotero 항목이 그새 바뀌었습니다.');
+		this.name = 'ZoteroVersionConflictError';
+	}
+}
+
+// 항목을 Zotero 휴지통으로 보낸다. 이미 없으면(404) 'gone', 버전이 어긋나면(412) ZoteroVersionConflictError.
+export async function deleteItem(api: ZoteroApi, itemKey: string, version: number): Promise<'deleted' | 'gone'> {
+	const what = '항목 삭제';
+	const res = await send(
+		api,
+		`${prefix(api)}/items/${itemKey}`,
+		{ method: 'DELETE', headers: { 'If-Unmodified-Since-Version': String(version) } },
+		what
+	);
+	await res.body?.cancel().catch(() => {});
+	if (res.status === 412) throw new ZoteroVersionConflictError();
+	if (res.status === 404) return 'gone';
+	if (!res.ok) throw new ZoteroUnavailableError(what, res.status);
+	return 'deleted';
 }

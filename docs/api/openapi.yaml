@@ -258,6 +258,8 @@ paths:
                       $ref: '#/components/schemas/PaperListItem'
                   nextCursor:
                     type: [string, 'null']
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
 
@@ -289,6 +291,8 @@ paths:
           $ref: '#/components/responses/Unauthenticated'
         '409':
           $ref: '#/components/responses/ZoteroNotConnected'
+        '502':
+          $ref: '#/components/responses/ZoteroUnavailable'
 
   /api/papers/{id}:
     parameters:
@@ -317,6 +321,10 @@ paths:
           $ref: '#/components/responses/Unauthenticated'
         '404':
           $ref: '#/components/responses/PaperNotFound'
+        '409':
+          $ref: '#/components/responses/ZoteroNotConnected'
+        '502':
+          $ref: '#/components/responses/ZoteroUnavailable'
 
   /api/papers/{id}/file:
     parameters:
@@ -340,6 +348,10 @@ paths:
           $ref: '#/components/responses/Unauthenticated'
         '404':
           $ref: '#/components/responses/FileNotFound'
+        '409':
+          $ref: '#/components/responses/ZoteroNotConnected'
+        '502':
+          $ref: '#/components/responses/ZoteroUnavailable'
 
   /api/collections:
     get:

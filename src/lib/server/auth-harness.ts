@@ -9,6 +9,12 @@ import { GET as zoteroConnectGet } from '../../routes/api/zotero/connect/+server
 import { GET as zoteroCallbackGet } from '../../routes/api/zotero/callback/+server';
 import { GET as zoteroStatusGet } from '../../routes/api/zotero/status/+server';
 import { POST as zoteroSyncPost } from '../../routes/api/zotero/sync/+server';
+import { GET as papersGet } from '../../routes/api/papers/+server';
+import { GET as paperGet } from '../../routes/api/papers/[id]/+server';
+import { GET as collectionsGet } from '../../routes/api/collections/+server';
+import { GET as paperFileGet } from '../../routes/api/papers/[id]/file/+server';
+import { DELETE as paperDelete } from '../../routes/api/papers/[id]/+server';
+import { POST as webpagePost } from '../../routes/api/papers/webpage/+server';
 import { DELETE as zoteroConnectionDelete } from '../../routes/api/zotero/connection/+server';
 
 export interface CookieOptions {
@@ -29,6 +35,7 @@ export interface HarnessResponse {
 	status: number;
 	headers: Headers;
 	body: unknown;
+	bytes: Uint8Array; // JSON이 아닌 응답(PDF, HTML)은 body가 null이고 원본 바이트가 여기 있다
 	setCookies: SetCookie[];
 	deleted: string[];
 }
@@ -43,9 +50,19 @@ const routes: Record<string, Handler> = {
 	'GET /api/zotero/connect': zoteroConnectGet as unknown as Handler,
 	'GET /api/zotero/callback': zoteroCallbackGet as unknown as Handler,
 	'GET /api/zotero/status': zoteroStatusGet as unknown as Handler,
+	'POST /api/papers/webpage': webpagePost as unknown as Handler,
+	'GET /api/papers': papersGet as unknown as Handler,
+	'GET /api/collections': collectionsGet as unknown as Handler,
 	'POST /api/zotero/sync': zoteroSyncPost as unknown as Handler,
 	'DELETE /api/zotero/connection': zoteroConnectionDelete as unknown as Handler
 };
+
+// 경로 매개변수가 있는 라우트. 이름 있는 그룹이 event.params가 된다.
+const paramRoutes: { method: string; pattern: RegExp; handler: Handler }[] = [
+	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)$/, handler: paperGet as unknown as Handler },
+	{ method: 'DELETE', pattern: /^\/api\/papers\/(?<id>[^/]+)$/, handler: paperDelete as unknown as Handler },
+	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)\/file$/, handler: paperFileGet as unknown as Handler }
+];
 
 const handle = createApiHandle({ verify: verifySession });
 
@@ -91,7 +108,12 @@ export class Browser {
 		};
 		const resolve = async (e: unknown): Promise<Response> => {
 			const route = routes[`${method} ${url.pathname}`];
-			return route ? route(e as never) : new Response('not found', { status: 404 });
+			if (route) return route(e as never);
+			for (const r of paramRoutes) {
+				const m = r.method === method ? r.pattern.exec(url.pathname) : null;
+				if (m) return r.handler({ ...(e as object), params: m.groups ?? {} } as never);
+			}
+			return new Response('not found', { status: 404 });
 		};
 		const res = await handle({ event, resolve } as never);
 
@@ -100,7 +122,9 @@ export class Browser {
 		}
 		for (const name of deleted) this.jar.delete(name);
 
-		const text = await res.text();
-		return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : null, setCookies, deleted };
+		const bytes = new Uint8Array(await res.arrayBuffer());
+		const isJson = (res.headers.get('content-type') ?? '').includes('json');
+		const text = new TextDecoder().decode(bytes);
+		return { status: res.status, headers: res.headers, body: isJson && text ? JSON.parse(text) : null, bytes, setCookies, deleted };
 	}
 }

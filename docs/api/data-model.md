@@ -185,6 +185,15 @@ PK `(user_id, key)`. `paperCount`는 저장하지 않고 `papers.collections`에
 ### 3.11 함수
 `folio_touch_updated_at()`(폴리오 그대로)와 `folio_users`의 트리거 하나다.
 
+서버(`service_role`)만 호출하는 함수가 있다. `anon`, `authenticated`는 실행할 수 없다.
+
+| 함수 | 용도 | 만든 곳 |
+|---|---|---|
+| `archi_reserve_login_attempt`, `archi_release_login_attempt` | 로그인 시도 제한 | 인증 |
+| `archi_apply_zotero_sync` | 동기화 결과를 `folio_papers`, `papers`, `archi_collections`, 동기화 상태에 한 트랜잭션으로 반영 | Zotero 연결 |
+| `archi_list_papers(user, query, collection, limit, cursor_synced_at, cursor_id)` | 논문 목록·검색. `(synced_at, id)` 내림차순 커서 방식. 검색어의 `\`, `%`, `_`는 글자 그대로 찾고, 제목과 저자 어느 쪽이든 일치하면 돌려준다 | 논문 |
+| `archi_collection_counts(user)` | 컬렉션과 그 컬렉션 키를 가진 논문 수(`paper_count`) | 논문 |
+
 ## 4. 스펙 응답 필드 대조
 
 7개 스펙의 응답 필드를 모두 올렸다.

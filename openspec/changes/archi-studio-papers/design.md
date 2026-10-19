@@ -81,6 +81,10 @@
 
 ## Open Questions
 
+> 4.2 대조 결과: `GET /api/papers`의 400 `invalid_request`(범위를 벗어난 `limit`, 깨진 `cursor`)가 `openapi.yaml`에 빠져 있어 추가했다. 나머지 경로의 상태 코드와 필드는 구현과 같았다.
+>
+> 확정(apply 시점): 1·2번은 추천대로 409 `zotero_not_connected`, 502 `zotero_unavailable`을 추가했다(`papers` 델타 스펙과 `openapi.yaml` 반영). 3번은 선행 change가 `src/lib/server/zotero/client.ts`(읽기 함수, `ZoteroApi`, `ZoteroUnavailableError`)와 `connection.ts`의 `getCredentials`(미연결이면 `null`)를 이미 제공하므로 가정과 같고, 어댑터 없이 첨부 다운로드·웹페이지 생성·항목 삭제 함수만 `client.ts`에 추가한다.
+
 1. **Zotero가 연결되지 않은 사용자가 원문 파일을 요청하거나 논문을 삭제하면 어떤 응답인가?** 스펙에는 웹페이지 추가의 409 `zotero_not_connected`만 있다. 추천: 파일과 삭제도 같은 409로 통일하고, 구현 전에 `papers` 델타 스펙(MODIFIED)과 `openapi.yaml`을 보강한다.
 2. **Zotero 서버가 오류를 돌려주거나 응답하지 않으면?** 스펙에 없다. 추천: 502 `zotero_unavailable`을 새로 정의하고 1번과 같은 보강에 넣는다.
 3. **Zotero HTTP 클라이언트의 주인은 누구인가?** 추천: `archi-studio-zotero-connection`이 기본 클라이언트(요청마다 사용자 키 붙이기, 오류 변환)를 만들고, 이 change는 첨부 다운로드, 웹페이지 항목 생성, 항목 삭제 함수만 추가한다. 선행 change에 없다면 첫 작업에서 최소 클라이언트부터 만든다.

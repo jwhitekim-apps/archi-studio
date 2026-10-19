@@ -29,6 +29,10 @@ export interface FakeZotero {
 	deleted: { key: string; version: number }[];
 	failChildrenFor: Set<string>;
 	calls: string[]; // "METHOD path" 기록
+	files: Map<string, { body: Buffer; contentType: string }>; // 첨부 key -> 파일
+	deleteConflicts: number; // 이 횟수만큼 삭제 요청에 412를 돌려준다(그때마다 항목 버전이 오른다)
+	setFile(attachmentKey: string, body: Buffer, contentType: string): void;
+	acceptUser(zoteroUserId: string): void; // 이 번호의 /users/<번호>/ 경로도 같은 라이브러리로 받는다
 	addItem(data: Record<string, unknown>, key?: string): FakeItem;
 	bumpItem(key: string, patch: Record<string, unknown>): FakeItem;
 	removeItem(key: string): void;
@@ -51,7 +55,10 @@ export async function startFakeZotero(opts: FakeZoteroOptions = {}): Promise<Fak
 		collections: [] as FakeItem[],
 		deleted: [] as { key: string; version: number }[],
 		failChildrenFor: new Set<string>(),
-		calls: [] as string[]
+		calls: [] as string[],
+		files: new Map<string, { body: Buffer; contentType: string }>(),
+		deleteConflicts: 0,
+		extraUserIds: new Set<string>()
 	};
 	const tokens = new Map<string, string>(); // request token -> secret
 	let baseUrl = '';
@@ -113,7 +120,7 @@ export async function startFakeZotero(opts: FakeZoteroOptions = {}): Promise<Fak
 		res.writeHead(404).end();
 	}
 
-	function handleApi(req: IncomingMessage, res: ServerResponse, url: URL) {
+	function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, body: Buffer) {
 		if (state.failStatus) {
 			res.writeHead(state.failStatus).end('upstream failure body');
 			return;
@@ -123,11 +130,53 @@ export async function startFakeZotero(opts: FakeZoteroOptions = {}): Promise<Fak
 			return;
 		}
 		const m = /^\/users\/([^/]+)\/(.*)$/.exec(url.pathname);
-		if (!m || m[1] !== state.userId) {
+		if (!m || (m[1] !== state.userId && !state.extraUserIds.has(m[1]))) {
 			res.writeHead(404).end();
 			return;
 		}
 		const rest = m[2];
+
+		if (req.method === 'POST' && rest === 'items') {
+			const list = JSON.parse(body.toString('utf8')) as Record<string, unknown>[];
+			const successful: Record<string, FakeItem> = {};
+			list.forEach((data, i) => {
+				successful[String(i)] = fake.addItem(data);
+			});
+			return json(res, { successful, failed: {} });
+		}
+		if (req.method === 'DELETE') {
+			const dm = /^items\/([^/]+)$/.exec(rest);
+			const item = dm ? state.items.find((i) => i.key === dm[1]) : undefined;
+			if (!item) {
+				res.writeHead(404).end();
+				return;
+			}
+			if (state.deleteConflicts > 0) {
+				state.deleteConflicts--;
+				item.version = bump();
+				res.writeHead(412).end();
+				return;
+			}
+			if (req.headers['if-unmodified-since-version'] !== String(item.version)) {
+				res.writeHead(412).end();
+				return;
+			}
+			fake.removeItem(item.key);
+			res.writeHead(204, { 'Last-Modified-Version': String(state.version) }).end();
+			return;
+		}
+
+		const fm = /^items\/([^/]+)\/file$/.exec(rest);
+		if (fm) {
+			const file = state.files.get(fm[1]);
+			if (!file) {
+				res.writeHead(404).end();
+				return;
+			}
+			res.writeHead(200, { 'content-type': file.contentType, 'content-length': String(file.body.length) }).end(file.body);
+			return;
+		}
+
 		const since = Number(url.searchParams.get('since') ?? 0);
 
 		if (rest === 'items/top') {
@@ -174,7 +223,9 @@ export async function startFakeZotero(opts: FakeZoteroOptions = {}): Promise<Fak
 			void handleOauth(req, res, url);
 			return;
 		}
-		handleApi(req, res, url);
+		const chunks: Buffer[] = [];
+		req.on('data', (c: Buffer) => chunks.push(c));
+		req.on('end', () => handleApi(req, res, url, Buffer.concat(chunks)));
 	});
 
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -196,6 +247,15 @@ export async function startFakeZotero(opts: FakeZoteroOptions = {}): Promise<Fak
 		deleted: state.deleted,
 		failChildrenFor: state.failChildrenFor,
 		calls: state.calls,
+		files: state.files,
+		get deleteConflicts() { return state.deleteConflicts; },
+		set deleteConflicts(v) { state.deleteConflicts = v; },
+		acceptUser(zoteroUserId) {
+			state.extraUserIds.add(zoteroUserId);
+		},
+		setFile(attachmentKey, body, contentType) {
+			state.files.set(attachmentKey, { body, contentType });
+		},
 		addItem(data, key) {
 			const item: FakeItem = { key: key ?? nextKey(), version: bump(), data: { itemType: 'journalArticle', ...data } };
 			(item.data as Record<string, unknown>).key = item.key;
