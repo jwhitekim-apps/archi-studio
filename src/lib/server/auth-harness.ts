@@ -5,6 +5,11 @@ import { GET as meGet } from '../../routes/api/auth/me/+server';
 import { POST as loginPost } from '../../routes/api/auth/login/+server';
 import { POST as logoutPost } from '../../routes/api/auth/logout/+server';
 import { POST as signupPost } from '../../routes/api/auth/signup/+server';
+import { GET as zoteroConnectGet } from '../../routes/api/zotero/connect/+server';
+import { GET as zoteroCallbackGet } from '../../routes/api/zotero/callback/+server';
+import { GET as zoteroStatusGet } from '../../routes/api/zotero/status/+server';
+import { POST as zoteroSyncPost } from '../../routes/api/zotero/sync/+server';
+import { DELETE as zoteroConnectionDelete } from '../../routes/api/zotero/connection/+server';
 
 export interface CookieOptions {
 	path?: string;
@@ -22,6 +27,7 @@ export interface SetCookie {
 
 export interface HarnessResponse {
 	status: number;
+	headers: Headers;
 	body: unknown;
 	setCookies: SetCookie[];
 	deleted: string[];
@@ -33,7 +39,12 @@ const routes: Record<string, Handler> = {
 	'POST /api/auth/signup': signupPost as unknown as Handler,
 	'POST /api/auth/login': loginPost as unknown as Handler,
 	'POST /api/auth/logout': logoutPost as unknown as Handler,
-	'GET /api/auth/me': meGet as unknown as Handler
+	'GET /api/auth/me': meGet as unknown as Handler,
+	'GET /api/zotero/connect': zoteroConnectGet as unknown as Handler,
+	'GET /api/zotero/callback': zoteroCallbackGet as unknown as Handler,
+	'GET /api/zotero/status': zoteroStatusGet as unknown as Handler,
+	'POST /api/zotero/sync': zoteroSyncPost as unknown as Handler,
+	'DELETE /api/zotero/connection': zoteroConnectionDelete as unknown as Handler
 };
 
 const handle = createApiHandle({ verify: verifySession });
@@ -50,7 +61,7 @@ export class Browser {
 		return this.jar.get(name);
 	}
 
-	async request(method: 'GET' | 'POST', path: string, body?: unknown): Promise<HarnessResponse> {
+	async request(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<HarnessResponse> {
 		const setCookies: SetCookie[] = [];
 		const deleted: string[] = [];
 		// 요청 안에서의 쿠키 읽기는 이 요청이 설정한 값을 먼저 보여 준다(SvelteKit과 같다).
@@ -61,7 +72,7 @@ export class Browser {
 				live.set(name, value);
 				setCookies.push({ name, value, options });
 			},
-			delete: (name: string) => {
+			delete: (name: string, _options?: CookieOptions) => {
 				live.delete(name);
 				deleted.push(name);
 			}
@@ -90,6 +101,6 @@ export class Browser {
 		for (const name of deleted) this.jar.delete(name);
 
 		const text = await res.text();
-		return { status: res.status, body: text ? JSON.parse(text) : null, setCookies, deleted };
+		return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : null, setCookies, deleted };
 	}
 }

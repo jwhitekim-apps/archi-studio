@@ -155,3 +155,30 @@ npm run db:stop      # 끝나면 종료
 - 시나리오와 테스트의 대응은 `docs/dev/auth-test-map.md`에 있다.
 - 테스트는 로컬 DB에 계정을 만들고 지운다. 운영(벨루) DB에는 접속하지 않는다.
 - 전체 확인: `npm run check`, `npm test`, `npm run build`, `npm run check:tokens`.
+
+## Zotero 연결 설정
+
+Zotero 연결 코드(`src/lib/server/zotero/`)는 서버 환경 변수 6개를 읽는다. 이름만 `.env.example`에 있고 값은 `.env`에만 적는다.
+
+| 변수 | 용도 |
+|---|---|
+| `ZOTERO_CLIENT_KEY`, `ZOTERO_CLIENT_SECRET` | zotero.org에 등록한 앱 키. 등록은 배포 단계(`archi-studio-deploy-cutover`)에서 한다 |
+| `APP_BASE_URL` | 새 앱의 공개 주소. 콜백 주소는 `APP_BASE_URL/api/zotero/callback`이다 |
+| `ZOTERO_KEY_ENCRYPTION_SECRET` | 사용자 Zotero 키를 저장 전에 암호화하는 비밀값. 32바이트를 base64로 쓴 값 |
+| `ZOTERO_API_BASE_URL`, `ZOTERO_OAUTH_BASE_URL` | 비워 두면 실제 Zotero 주소를 쓴다. 시험에서만 가짜 서버 주소로 바꾼다 |
+
+```bash
+# 암호화 비밀값 만들기. 출력된 값을 .env의 ZOTERO_KEY_ENCRYPTION_SECRET= 뒤에 붙여 넣는다 (저장소에 적지 않는다)
+openssl rand -base64 32
+```
+
+- 이 비밀값을 잃으면 저장된 Zotero 키를 풀 수 없어 모든 사용자가 다시 연결해야 한다(논문 목록은 남는다). 서버 `.env`와 별도 안전한 곳에 백업한다. 교체 절차는 아직 정하지 않았다(암호문 접두사 `v1`이 교체 시 구분용이다).
+- 앱 키가 없으면 `connect`와 `callback`은 설정 오류로 500이 된다. 동기화·상태·해제는 앱 키 없이 동작한다.
+
+### 가짜 Zotero 서버로 시험하기
+
+실제 Zotero에는 접속하지 않는다. `src/lib/server/zotero/fake-zotero.ts`가 Node `http`로 OAuth와 Web API 일부(`items/top`, 첨부 변경, `deleted`, `children`, `collections`, 페이지 나누기)를 흉내 낸다.
+
+- `npm test`: 가짜 서버만으로 도는 단위 시험(암호화, 서명, 클라이언트, 변환 규칙).
+- `npm run test:auth`: 로컬 Supabase와 가짜 서버로 연결 → 동기화 → 해제 전체를 시험한다. Zotero 변수는 시험 코드가 직접 채우므로 `.env`에는 위 `SUPABASE_*` 4개만 있으면 된다.
+- 실제 Zotero 앱 키 등록과 실제 계정 연결 시험은 배포 단계에서 한다.

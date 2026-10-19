@@ -143,13 +143,17 @@ paths:
                 format: uri
         '401':
           $ref: '#/components/responses/Unauthenticated'
+        '502':
+          $ref: '#/components/responses/ZoteroUnavailable'
 
   /api/zotero/callback:
     get:
       tags: [zotero]
       summary: Zotero OAuth1 연결 완료 (Zotero가 호출하는 콜백)
       description: |
-        성공하면 서재 화면으로, 사용자가 승인을 거부하면 오류 안내와 함께 설정 화면으로 리다이렉트한다.
+        성공하면 서재 화면(`/library`)으로 리다이렉트한다. 그 밖의 결과는 설정 화면으로 리다이렉트하고 `zotero` 쿼리로 이유를 알린다.
+        `/settings?zotero=denied`(사용자가 승인을 거부함), `/settings?zotero=error`(연결 시간 초과, 토큰 불일치, 교환 실패),
+        `/settings?zotero=in_use`(같은 Zotero 계정을 다른 사용자가 이미 연결함).
         저장된 Zotero 자격 정보는 어떤 API 응답에도 포함되지 않는다.
       parameters:
         - name: oauth_token
@@ -199,6 +203,8 @@ paths:
           $ref: '#/components/responses/Unauthenticated'
         '409':
           $ref: '#/components/responses/ZoteroNotConnected'
+        '502':
+          $ref: '#/components/responses/ZoteroUnavailable'
 
   /api/zotero/connection:
     delete:
@@ -816,6 +822,12 @@ components:
             $ref: '#/components/schemas/Error'
     ZoteroNotConnected:
       description: 409 `zotero_not_connected`. Zotero를 연결하지 않았다.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ZoteroUnavailable:
+      description: 502 `zotero_unavailable`. Zotero에 연결할 수 없거나 Zotero가 오류를 돌려줬다(키가 폐기된 경우 포함). 본문에 Zotero 응답 원문이나 키는 없다.
       content:
         application/json:
           schema:
