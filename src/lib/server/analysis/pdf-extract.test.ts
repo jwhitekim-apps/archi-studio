@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { abstractFromText, extractFromPdf, idsFromText, MAX_PDF_BYTES, titleFromLines } from './pdf-extract';
+import { abstractFromText, extractFromPdf, idsFromText, MAX_PDF_BYTES, titleFromLines, toLines } from './pdf-extract';
 import { PdfTooLargeError, PdfUnreadableError } from './types';
 
 // 시험용 PDF는 scripts/make-analysis-fixture.mjs가 만든다.
@@ -56,6 +56,31 @@ describe('규칙 단위', () => {
 		];
 		expect(titleFromLines(lines)).toBe('You Need a b');
 		expect(titleFromLines([])).toBe('');
+	});
+
+	// 실제 arXiv PDF(OpenHands, SWE-agent, MetaGPT)에서 본 모양을 줄인 것
+	const item = (str: string, x: number, size: number, width: number, hasEOL = false, rotated = false) => ({
+		str,
+		transform: rotated ? [0, size, -size, 0, x, 0] : [size, 0, 0, size, x, 0],
+		width,
+		hasEOL
+	});
+
+	it('세로로 놓인 arXiv 여백 도장은 제목 줄에서 빠진다', () => {
+		const items = [item('arXiv:2407.16741v3 [cs.SE] 18 Apr 2025', 10, 20, 300, true, true), item('Real Title', 100, 17, 120, true)];
+		expect(titleFromLines(toLines(items))).toBe('Real Title');
+	});
+
+	it('작은 대문자 조각은 붙이고, 공백 조각이나 넓은 간격에서만 띄운다', () => {
+		const items = [
+			item('M', 0, 17, 14),
+			item('ETA', 14, 14, 30),
+			item('GPT:', 44, 17, 40),
+			item(' ', 84, 17, 4),
+			item('A', 88, 17, 12),
+			item('GENT', 120, 14, 40, true)
+		];
+		expect(toLines(items)).toEqual([{ size: 17, text: 'METAGPT: A GENT' }]);
 	});
 
 	it.each([

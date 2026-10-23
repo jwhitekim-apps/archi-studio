@@ -1,5 +1,6 @@
 // PDF에서 제목·초록·DOI·arXiv 번호 읽기. 벨루 core/pdf_extractor.py(PyMuPDF)의 규칙을 pdf.js로 옮겼다(그림 추출 제외).
 // 다른 점: 벨루는 제목 줄을 (크기, 문자열) 역순으로 정렬해 같은 크기의 여러 줄 제목이 알파벳 역순으로 섞였다. 여기서는 문서 순서를 지킨다.
+// 다른 점 2: arXiv 판 왼쪽 여백의 세로 도장이 가장 큰 글자로 잡혀 제목이 되던 문제를, 세로 글자를 빼서 고쳤다.
 import { getDocument, VerbosityLevel } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { PdfTooLargeError, PdfUnreadableError, type PdfExtract } from './types';
 
@@ -20,6 +21,7 @@ const ABSTRACT_PATTERNS = [
 interface PdfTextItem {
 	str: string;
 	transform: number[];
+	width: number;
 	hasEOL: boolean;
 }
 
@@ -29,21 +31,35 @@ interface Line {
 }
 
 // pdf.js 글자 조각을 줄로 묶는다. PyMuPDF의 line과 같은 단위로 hasEOL에서 끊는다.
-function toLines(items: PdfTextItem[]): Line[] {
+// 조각 사이는 공백 조각이 있거나 간격이 글자 크기의 20%를 넘을 때만 띄운다(작은 대문자 "M ETA GPT"가 갈라지지 않게).
+export function toLines(items: PdfTextItem[]): Line[] {
 	const lines: Line[] = [];
-	let parts: string[] = [];
+	let text = '';
 	let size = 0;
+	let space = false;
+	let end: number | null = null;
 	const flush = () => {
-		if (parts.length && size > 10) lines.push({ size, text: parts.join(' ') });
-		parts = [];
+		if (text && size > 10) lines.push({ size, text });
+		text = '';
 		size = 0;
+		space = false;
+		end = null;
 	};
 	for (const item of items) {
-		const text = item.str.trim();
-		const itemSize = Math.hypot(item.transform[2], item.transform[3]);
-		if (text && itemSize > 10) {
-			parts.push(text);
+		const str = item.str.trim();
+		const [a, b, c, d, x] = item.transform;
+		const itemSize = Math.hypot(c, d);
+		// 세로 글자(arXiv 판의 왼쪽 여백 도장 "arXiv:2407.16741v3 [cs.SE] …")는 제목 후보에서 뺀다. 벨루와 다른 점.
+		const vertical = Math.abs(b) > Math.abs(a);
+		if (!str) {
+			space = true;
+		} else if (itemSize > 10 && !vertical) {
+			const gap = end === null ? 0 : x - end;
+			if (text && (space || /^\s/.test(item.str) || gap > itemSize * 0.2)) text += ' ';
+			text += str;
 			size = Math.max(size, itemSize);
+			space = /\s$/.test(item.str);
+			end = x + item.width;
 		}
 		if (item.hasEOL) flush();
 	}
@@ -98,7 +114,7 @@ export async function extractFromPdf(buffer: Uint8Array): Promise<PdfExtract> {
 		const pages: PdfTextItem[][] = [];
 		for (let i = 1; i <= Math.min(3, doc.numPages); i++) {
 			const content = await (await doc.getPage(i)).getTextContent();
-			pages.push(content.items.flatMap((it) => ('str' in it ? [{ str: it.str, transform: it.transform, hasEOL: it.hasEOL }] : [])));
+			pages.push(content.items.flatMap((it) => ('str' in it ? [{ str: it.str, transform: it.transform, width: it.width, hasEOL: it.hasEOL }] : [])));
 		}
 		const texts = pages.map(pageText);
 		return {

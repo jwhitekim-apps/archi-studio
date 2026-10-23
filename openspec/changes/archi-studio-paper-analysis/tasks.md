@@ -10,7 +10,7 @@
 ## 2. PDF 읽기 (1단계)
 
 - [x] 2.1 설치 전에 `npm view pdfjs-dist license engines`로 라이선스와 Node 요구 버전을 확인해 design.md의 표를 확정하고(맞지 않으면 대안 후보를 같은 방식으로 확인), `npm install pdfjs-dist` 뒤 `src/lib/server/analysis/pdf-extract.ts`와 단위 테스트를 만든다. `npx vitest run src/lib/server/analysis/pdf-extract.test.ts`에서 `sample.pdf`의 제목·초록(80자 이상)·DOI·arXiv 번호가 기대값과 같고, `no-abstract.pdf`는 초록이 빈 문자열, `broken.pdf`는 `PdfUnreadableError`, 50MB 초과 버퍼는 읽기 전에 `PdfTooLargeError`인지 확인하고 `npm run check`가 통과한다
-- [ ] 2.2 사용자가 정해 주는 PDF 3~5개(저장소에 넣지 않는다)로 같은 PDF를 벨루의 `extract_from_pdf`(읽기 전용 실행)와 새 모듈에 각각 돌려, 제목·초록 앞 200자·DOI를 표로 `docs/dev/analysis-pdf-compare.md`에 기록한다. 정규화한 제목이 같은 비율이 80% 이상이어야 통과이고, 다른 것은 원인(2단 편집, 글꼴 크기 차이 등)을 적는다
+- [x] 2.2 사용자가 정해 주는 PDF 3~5개(저장소에 넣지 않는다)로 같은 PDF를 벨루의 `extract_from_pdf`(읽기 전용 실행)와 새 모듈에 각각 돌려, 제목·초록 앞 200자·DOI를 표로 `docs/dev/analysis-pdf-compare.md`에 기록한다. 정규화한 제목이 같은 비율이 80% 이상이어야 통과이고, 다른 것은 원인(2단 편집, 글꼴 크기 차이 등)을 적는다
 
 ## 3. 저널 점수 (2단계)
 
