@@ -193,6 +193,7 @@ PK `(user_id, key)`. `paperCount`는 저장하지 않고 `papers.collections`에
 | `archi_apply_zotero_sync` | 동기화 결과를 `folio_papers`, `papers`, `archi_collections`, 동기화 상태에 한 트랜잭션으로 반영 | Zotero 연결 |
 | `archi_list_papers(user, query, collection, limit, cursor_synced_at, cursor_id)` | 논문 목록·검색. `(synced_at, id)` 내림차순 커서 방식. 검색어의 `\`, `%`, `_`는 글자 그대로 찾고, 제목과 저자 어느 쪽이든 일치하면 돌려준다 | 논문 |
 | `archi_collection_counts(user)` | 컬렉션과 그 컬렉션 키를 가진 논문 수(`paper_count`) | 논문 |
+| `archi_find_translation(user, text, paper_id)` | 저장된 번역 찾기. `md5(source_text)` 해시 색인으로 후보를 좁히고 원문 일치로 다시 대조한다. 같은 원문이 없으면 0행, 있으면 가장 최근 번역문(`translated_text`)과 그 논문에 같은 원문 행이 이미 있는지(`paper_linked`)를 한 줄로 돌려준다 | 번역 |
 
 ## 4. 스펙 응답 필드 대조
 
@@ -218,7 +219,7 @@ PK `(user_id, key)`. `paperCount`는 저장하지 않고 `papers.collections`에
 | papers | 컬렉션 `paperCount` | `papers.collections`에서 센다 |
 | papers | 원문 파일 | 저장하지 않음. `attachment_key`로 Zotero에서 가져온다 |
 | paper-notes | `markdown`, `updatedAt` | 저장하지 않음. Zotero 노트를 실시간으로 읽는다(`zotero-insight:memo` 태그) |
-| translation | 번역문 스트림, 이력 항목 | `archi_translations`. 이력 항목의 필드 형식은 스펙에 없다 |
+| translation | 번역문 스트림, 이력 항목 | `archi_translations`. 이력 항목은 `{id, sourceText, translatedText, type, paperId, createdAt}`(`openapi.yaml`의 `TranslationRecord`) |
 | paper-analysis | 분석 결과 | `archi_analyses.result` |
 | briefing | `id`, `date`, `summary` | `archi_briefings` |
 | briefing | 본문, `paperIds` | `archi_briefings.body`, `archi_briefing_papers` |

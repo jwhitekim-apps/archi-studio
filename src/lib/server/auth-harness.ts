@@ -16,6 +16,8 @@ import { GET as paperFileGet } from '../../routes/api/papers/[id]/file/+server';
 import { DELETE as paperDelete } from '../../routes/api/papers/[id]/+server';
 import { POST as webpagePost } from '../../routes/api/papers/webpage/+server';
 import { DELETE as zoteroConnectionDelete } from '../../routes/api/zotero/connection/+server';
+import { POST as translatePost } from '../../routes/api/translate/+server';
+import { GET as translateHistoryGet } from '../../routes/api/translate/history/+server';
 
 export interface CookieOptions {
 	path?: string;
@@ -54,7 +56,9 @@ const routes: Record<string, Handler> = {
 	'GET /api/papers': papersGet as unknown as Handler,
 	'GET /api/collections': collectionsGet as unknown as Handler,
 	'POST /api/zotero/sync': zoteroSyncPost as unknown as Handler,
-	'DELETE /api/zotero/connection': zoteroConnectionDelete as unknown as Handler
+	'DELETE /api/zotero/connection': zoteroConnectionDelete as unknown as Handler,
+	'POST /api/translate': translatePost as unknown as Handler,
+	'GET /api/translate/history': translateHistoryGet as unknown as Handler
 };
 
 // 경로 매개변수가 있는 라우트. 이름 있는 그룹이 event.params가 된다.
@@ -78,7 +82,8 @@ export class Browser {
 		return this.jar.get(name);
 	}
 
-	async request(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<HarnessResponse> {
+	// raw를 주면 body 대신 그 문자열을 그대로 보낸다(JSON이 아닌 본문 시험용).
+	async request(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, raw?: string): Promise<HarnessResponse> {
 		const setCookies: SetCookie[] = [];
 		const deleted: string[] = [];
 		// 요청 안에서의 쿠키 읽기는 이 요청이 설정한 값을 먼저 보여 준다(SvelteKit과 같다).
@@ -98,8 +103,8 @@ export class Browser {
 		const event = {
 			request: new Request(url, {
 				method,
-				headers: body === undefined ? {} : { 'content-type': 'application/json' },
-				body: body === undefined ? undefined : JSON.stringify(body)
+				headers: body === undefined && raw === undefined ? {} : { 'content-type': 'application/json' },
+				body: raw ?? (body === undefined ? undefined : JSON.stringify(body))
 			}),
 			url,
 			cookies,

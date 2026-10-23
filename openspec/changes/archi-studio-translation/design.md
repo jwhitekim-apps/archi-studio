@@ -5,7 +5,7 @@
 - 계약은 메인 스펙 `translation`(요구사항 4개)과 `docs/api/openapi.yaml`에 있고, 이 change의 델타 스펙이 요구사항 3개를 더한다. 동기는 `proposal.md`를 본다.
 - 번역 이력 테이블 `archi_translations`와 해시 색인 `(user_id, md5(source_text))`는 마이그레이션에 이미 있다(`supabase/migrations/20261018000400_history.sql`). `papers` 테이블도 이미 있다.
 - 서버 코드는 `src/lib/server/`에 모여 있고, 라우트는 `api-guard`를 거쳐 `locals.user`를 받는다. 인증 구현(`auth-service.ts` + `auth-deps.ts` + `auth-harness.ts`)이 "서비스 함수에 의존성을 주입하고, 시험은 하네스로 가드와 라우트를 통째로 거친다"는 패턴을 이미 만들어 두었다. 번역도 같은 패턴을 쓴다.
-- AI 호출은 `archi-studio-ai-provider`가 `src/lib/server/ai/`에 만든다. 이 문서는 그쪽의 `stream`(글자 단위 흘려보내기), 모델 등급 `smart`, 시험용 가짜 제공자, 오류 코드 `ai_not_configured`/`ai_unavailable`/`ai_rate_limited`/`ai_empty_response`를 쓴다고 가정한다. 함수 이름과 인자는 그 change의 `design.md`가 확정되면 이 change의 tasks를 맞춘다.
+- AI 호출은 `archi-studio-ai-provider`가 `src/lib/server/ai/`에 만들었다(보관됨, 메인 스펙 `ai-provider`). 이 change는 `getAiProvider('translation')`, `provider.stream({ system, user, maxTokens, tier, signal })`(글자 조각을 내보내는 `AsyncIterable<string>`, 글자 없이 끝나면 `ai_empty_response`), 모델 등급 `smart`, 시험용 `createFakeProvider`, `AiError`의 오류 코드 `ai_not_configured`/`ai_unavailable`/`ai_rate_limited`/`ai_empty_response`를 쓴다. 설정 오류는 `getAiProvider`가 바로 `AiError('ai_not_configured')`로 던진다.
 - 벨루의 동작(관찰한 사실): 입력을 앞뒤 공백 제거 후 사용, 같은 사용자·같은 원문이면 저장된 번역을 `X-Cache: HIT` 헤더와 함께 반환, 새 번역은 `max_tokens=4096`, 등급 `smart`로 스트리밍하고 끝난 뒤 저장, 모델이 한 글자도 못 보내면 HTTP 200에 한국어 오류 문장을 본문으로 보냄, 이력은 최신 10개만 돌려줌.
 
 ## Goals / Non-Goals

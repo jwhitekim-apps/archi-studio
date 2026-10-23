@@ -35,3 +35,16 @@ export function standardError(code: StandardErrorCode, headers: HeadersInit = {}
 export function paperNotFound(): Response {
 	return errorResponse(404, 'paper_not_found', '논문을 찾을 수 없습니다.');
 }
+
+export function payloadTooLarge(message = '요청 본문이 너무 큽니다.'): Response {
+	return errorResponse(413, 'payload_too_large', message);
+}
+
+// AI 오류의 HTTP 응답(archi-studio-translation 결정 5). 세부 원인은 서버 로그에 코드 이름만 남긴다.
+export function aiNotConfigured(): Response {
+	return errorResponse(503, 'ai_not_configured', 'AI 모델이 설정되어 있지 않습니다. 관리자에게 문의해 주세요.');
+}
+
+export function aiUnavailable(): Response {
+	return errorResponse(502, 'ai_unavailable', 'AI 모델이 응답하지 않습니다. 잠시 뒤 다시 시도해 주세요.');
+}

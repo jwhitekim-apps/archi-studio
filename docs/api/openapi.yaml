@@ -431,6 +431,9 @@ paths:
         요청의 `paperId`가 그 `text`의 기존 이력에 없는 논문이면 그 논문의 이력 행을 하나 더 저장한다.
         `paperId`는 선택 값이다. 있으면 이력에 그 논문의 내부 `id`를 함께 저장하고(논문이 삭제되면 이 이력도 함께 삭제된다),
         없으면 논문과 무관하게 동작한다. 없는 논문이거나 다른 사용자의 논문이면 404 `paper_not_found`를 돌려주며 AI를 호출하지 않는다.
+        모델이 첫 글자를 보내기 전에 실패하면 스트리밍을 시작하지 않고 502·503 JSON 오류를 돌려준다. 스트림이 시작된 뒤 실패하면
+        연결을 오류로 끝내고(본문에 오류 문장을 섞지 않는다) 이력에 저장하지 않는다. 요청자가 연결을 끊어도 저장하지 않는다.
+        요청 본문은 64 KiB를 넘으면 413이다.
       requestBody:
         required: true
         content:
@@ -451,6 +454,12 @@ paths:
       responses:
         '200':
           description: 번역문 스트림
+          headers:
+            X-Cache:
+              description: 저장된 번역을 돌려주면 `HIT`, 모델로 새로 번역하면 `MISS`.
+              schema:
+                type: string
+                enum: [HIT, MISS]
           content:
             text/plain:
               schema:
@@ -463,18 +472,31 @@ paths:
           $ref: '#/components/responses/PaperNotFound'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '502':
+          $ref: '#/components/responses/AiUnavailable'
+        '503':
+          $ref: '#/components/responses/AiNotConfigured'
 
   /api/translate/history:
     get:
       tags: [translation]
       summary: 번역 이력 (최신순)
+      description: 최신순으로 앞에서부터 `limit`개를 돌려준다. 쪽 넘김은 없다. 다른 사용자의 논문 id로 거르면 404가 아니라 빈 목록이다.
       parameters:
         - name: paperId
           in: query
-          description: 선택 값. 주면 그 논문에 연결된 번역만 걸러낸다.
+          description: 선택 값. 주면 그 논문에 연결된 번역만 걸러낸다. uuid 형식이 아니면 400 `invalid_request`.
           schema:
             type: string
             format: uuid
+        - name: limit
+          in: query
+          description: 돌려줄 최대 개수. 범위를 벗어나거나 정수가 아니면 400 `invalid_request`.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
       responses:
         '200':
           description: 이력 목록
@@ -488,6 +510,8 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/TranslationRecord'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
 
@@ -870,6 +894,18 @@ components:
             $ref: '#/components/schemas/Error'
     PayloadTooLarge:
       description: 413 `payload_too_large`. 메모 본문 1 MB 초과 또는 번역 `text` 5000자 초과.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    AiUnavailable:
+      description: 502 `ai_unavailable`. AI 모델이 첫 글자 전에 실패했거나(일시 장애, 호출 제한) 빈 응답을 돌려줬다.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    AiNotConfigured:
+      description: 503 `ai_not_configured`. 서버에 AI 모델의 키나 주소가 설정되어 있지 않다.
       content:
         application/json:
           schema:
