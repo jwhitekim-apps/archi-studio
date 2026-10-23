@@ -9,16 +9,30 @@
 		streaming = false,
 		error,
 		label = '결과',
-		placeholder = ''
-	}: { text: string; streaming?: boolean; error?: string; label?: string; placeholder?: string } = $props();
+		placeholder = '',
+		live = true,
+		progressLabel = '받는 중'
+	}: {
+		text: string;
+		streaming?: boolean;
+		error?: string;
+		label?: string;
+		placeholder?: string;
+		// false면 조각마다 스크린리더가 읽지 않는다. 완료 안내는 부르는 화면이 따로 한다
+		live?: boolean;
+		progressLabel?: string;
+	} = $props();
 </script>
 
 <div class="stream">
-	<div class="output" role="region" aria-label={label} aria-live="polite" aria-busy={streaming}>
-		{#if text}{text}{:else if !streaming}<span class="placeholder">{placeholder}</span>{/if}
+	<div class="output" role="region" aria-label={label} aria-live={live ? 'polite' : 'off'} aria-busy={streaming}>
+		{#if text}{text}{:else if !streaming}<span class="placeholder">{placeholder}</span>{/if}{#if streaming}<span
+				class="cursor"
+				aria-hidden="true"
+			></span>{/if}
 	</div>
 	{#if streaming}
-		<p class="progress" role="status"><Spinner size={12} /> 받는 중</p>
+		<p class="progress"><Spinner size={12} /> {progressLabel}</p>
 	{/if}
 	{#if error}
 		<Notice kind="error">{error}</Notice>
@@ -43,6 +57,28 @@
 		line-height: var(--lh-relaxed);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
+	}
+
+	.cursor {
+		display: inline-block;
+		width: 2px;
+		height: 1.1em;
+		margin-left: 1px;
+		vertical-align: text-bottom;
+		background: var(--color-accent);
+		animation: blink 1s steps(1) infinite;
+	}
+
+	@keyframes blink {
+		50% {
+			opacity: 0;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.cursor {
+			animation: none;
+		}
 	}
 
 	.placeholder {

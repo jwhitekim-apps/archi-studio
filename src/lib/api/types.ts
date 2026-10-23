@@ -52,3 +52,45 @@ export interface Collection {
 export interface ErrorBody {
 	error: { code: string; message: string };
 }
+
+export interface TranslationRecord {
+	id: string;
+	sourceText: string;
+	translatedText: string;
+	type: 'word' | 'sentence';
+	paperId: string | null;
+	createdAt: string;
+}
+
+export interface JournalScore {
+	matchedTitle: string | null;
+	sjr: number | null;
+	quartile: string | null;
+	issn: string | null;
+	type: string | null;
+	country: string | null;
+}
+
+export interface Analysis {
+	paperId: string;
+	summary: string;
+	keywords: string[];
+	domain: string | null;
+	problemShort: string | null;
+	problem: string | null;
+	methodShort: string | null;
+	method: string | null;
+	conclusionShort: string | null;
+	conclusion: string | null;
+	basic: {
+		title: string | null;
+		year: number | null;
+		venue: string | null;
+		doi: string | null;
+		arxivId: string | null;
+		citationCount: number | null;
+	};
+	authors: { name: string; hIndex: number | null; citationCount: number | null }[];
+	journalScore: JournalScore;
+	sources: { pdf: boolean; semanticScholar: boolean };
+}

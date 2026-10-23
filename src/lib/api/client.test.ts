@@ -66,6 +66,12 @@ describe('apiFetch', () => {
 		expect(navigate).not.toHaveBeenCalled();
 	});
 
+	it('redirectOn401: false면 401에도 이동하지 않는다', async () => {
+		const { api, navigate } = setup(() => json(401, { error: { code: 'unauthenticated', message: '' } }));
+		await expect(api('/api/papers', { redirectOn401: false })).rejects.toMatchObject({ status: 401 });
+		expect(navigate).not.toHaveBeenCalled();
+	});
+
 	it('loginUrl은 경로와 쿼리를 인코딩한다', () => {
 		expect(loginUrl(new URL('http://x/library'))).toBe('/login?redirect=%2Flibrary');
 	});

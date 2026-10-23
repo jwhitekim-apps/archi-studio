@@ -61,6 +61,8 @@ export interface ApiOptions {
 	fetch?: typeof fetch;
 	// 지금 주소. 401일 때 돌아올 주소로 쓴다. 없으면 브라우저 주소
 	url?: URL;
+	// false면 401에도 로그인 화면으로 보내지 않는다(입력을 지켜야 하는 번역·분석 화면)
+	redirectOn401?: boolean;
 }
 
 export interface ApiClientDeps {
@@ -102,7 +104,7 @@ export function createApiClient(deps: ApiClientDeps) {
 			return (text ? JSON.parse(text) : undefined) as T;
 		}
 		const error = await toApiError(response);
-		if (error.status === 401 && !path.startsWith('/api/auth/')) {
+		if (error.status === 401 && options.redirectOn401 !== false && !path.startsWith('/api/auth/')) {
 			onUnauthenticated(options.url ?? deps.currentUrl?.());
 		}
 		throw error;

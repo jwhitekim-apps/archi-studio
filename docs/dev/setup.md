@@ -144,8 +144,10 @@ kill %1
 | `auth` | 가입 → 승인 → 로그인 → 로그아웃, 오류 문구, 시도 제한(실제 인증 API) | 필요 |
 | `library` | 서재 목록·검색·컬렉션·동기화·웹페이지 추가·삭제(가짜 응답, 로그인은 실제) | 필요 |
 | `settings` | 설정 화면의 Zotero 연결 상태와 해제, 거부 안내(가짜 응답) | 필요 |
-| `layout` | 7개 화면 × 라이트·다크 × 1280·767·390px의 가로 넘침과 세 영역 | 필요 |
+| `layout` | 10개 화면(번역·분석 결과 포함) × 라이트·다크 × 1280·767·390px의 가로 넘침과 세 영역 | 필요 |
 | `library-real` | SQL로 넣은 논문 55건으로 실제 서버의 목록·검색·컬렉션·더 보기 | 필요 |
+| `translate` | 번역 화면: 조각 표시, 중지, 복사, 오류 상태, 논문 연결, 이력, 자동 번역, Tab 순서(브라우저 안 가짜 스트림) | 필요 |
+| `analyze` | 분석 화면: 논문 선택기, 저장된 분석 우선, 분석 실행, 오류 상태, 결과 표시, 설정 패널 전환(가짜 응답) | 필요 |
 
 ```bash
 export LD_LIBRARY_PATH="$HOME/.cache/archi-chromelibs/root/usr/lib/x86_64-linux-gnu"
@@ -161,6 +163,7 @@ npm run db:stop
 
 - 검사는 `ui-check-…@example.com` 계정을 만들어 쓰고 끝나면 지운다. 로그인 실패 기록(`archi_login_attempts`)도 127.0.0.1 것만 지운다.
 - `auth` 묶음은 같은 IP의 로그인 시도 제한(15분에 5번)을 일부러 넘긴다. 검사가 중간에 멈추면 다음 실행 전에 `delete from public.archi_login_attempts`를 직접 실행한다.
+- `translate` 묶음은 실제 AI를 부르지 않는다. 브라우저의 `fetch`를 `/api/translate`에 한해 감싸 시간차 조각, 한글 바이트 분할, 중간 끊김, 상태 코드별 오류를 흉내 낸다(`installFakeTranslate`).
 - 스크린샷은 두 번째 인자 폴더에 `light|dark-<화면>-<폭>.png`, `library-list.png`, `settings-confirm.png` 등으로 저장된다.
 
 ## 인증 테스트 실행

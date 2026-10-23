@@ -7,6 +7,7 @@
 		placeholder = '',
 		oninput,
 		onclear,
+		onkeydown,
 		input = $bindable()
 	}: {
 		value?: string;
@@ -15,6 +16,8 @@
 		placeholder?: string;
 		oninput?: (value: string) => void;
 		onclear?: () => void;
+		// 목록 고르기(화살표, Enter) 같은 추가 키 처리. Escape 지우기 뒤에 불린다
+		onkeydown?: (event: KeyboardEvent) => void;
 		input?: HTMLInputElement;
 	} = $props();
 
@@ -38,7 +41,9 @@
 			if (event.key === 'Escape' && value) {
 				event.preventDefault();
 				clear();
+				return;
 			}
+			onkeydown?.(event);
 		}}
 	/>
 	{#if value}

@@ -10,8 +10,8 @@ export interface NavEntry {
 
 export const NAV_ITEMS: NavEntry[] = [
 	{ label: '서재', href: '/library', icon: 'library' },
-	{ label: '번역', icon: 'file', disabled: true },
-	{ label: '분석', icon: 'search', disabled: true },
+	{ label: '번역', href: '/translate', icon: 'file' },
+	{ label: '분석', href: '/analyze', icon: 'search' },
 	{ label: '메모', icon: 'note', disabled: true },
 	{ label: '브리핑', icon: 'external', disabled: true }
 ];

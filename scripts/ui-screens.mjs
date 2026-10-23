@@ -2,7 +2,8 @@
 // 사용: node scripts/ui-screens.mjs http://127.0.0.1:5273 <저장 폴더> [검사 묶음,...]
 // 검사 묶음: components(공통 부품), signup(가입 화면, 가짜 응답), auth(로그인 흐름, 실제 인증 API),
 // library(서재, 가짜 응답), settings(설정, 가짜 응답), layout(화면 크기·테마별 배치),
-// library-real(로컬 DB에 SQL로 넣은 논문으로 실제 서버의 목록·검색·컬렉션·더 보기). 아무것도 주지 않으면 모두 돈다.
+// library-real(로컬 DB에 SQL로 넣은 논문으로 실제 서버의 목록·검색·컬렉션·더 보기),
+// translate(번역 화면, 브라우저 안 가짜 스트림), analyze(분석 화면, 가짜 응답). 아무것도 주지 않으면 모두 돈다.
 // components와 signup 말고는 로컬 Supabase가 떠 있어야 한다(npm run db:start). 화면 검사용 계정은 끝나면 지운다.
 // 실행 준비와 묶음별 조건은 docs/dev/setup.md의 "화면 검사" 절.
 import { chromium } from 'playwright';
@@ -710,7 +711,19 @@ async function layouts() {
 		{ name: 'library', path: '/library', shell: true, papers: () => list([paper(1, 'Attention Is All You Need: a very long title that should wrap instead of overflowing the narrow screen', { hasPdf: true, hasMemo: true }), paper(2, 'BERT', { hasPdf: true })], 'c2') },
 		{ name: 'library-empty', path: '/library', shell: true, papers: () => list([]) },
 		{ name: 'library-error', path: '/library', shell: true, papers: () => ({ status: 500, body: { error: { code: 'internal_error', message: '' } } }) },
-		{ name: 'settings', path: '/settings', shell: true }
+		{ name: 'settings', path: '/settings', shell: true },
+		{
+			name: 'translate',
+			path: '/translate',
+			shell: true,
+			prepare: async (page) => {
+				await page.getByLabel('원문').fill('Attention is all you need, and a fairly long sentence to see how the result wraps on a narrow phone screen.');
+				await page.getByRole('button', { name: '번역', exact: true }).click();
+				await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.getAttribute('aria-busy') === 'false');
+			}
+		},
+		{ name: 'analyze', path: `/analyze?paperId=${paperId(1)}`, shell: true, prepare: (page) => page.locator('#analysis-title').waitFor() },
+		{ name: 'analyze-picker', path: '/analyze', shell: true, prepare: (page) => page.getByRole('option').first().waitFor() }
 	];
 	let session = null;
 	for (const scheme of ['light', 'dark']) {
@@ -724,16 +737,22 @@ async function layouts() {
 					await made.context.close();
 				}
 				context = await browser.newContext({ colorScheme: scheme, viewport: { width: 1280, height: 800 }, storageState: session });
+				await context.addInitScript(installFakeTranslate);
 			} else {
 				context = await browser.newContext({ colorScheme: scheme, viewport: { width: 1280, height: 800 } });
 			}
 			const page = await context.newPage();
 			if (screen.shell) {
-				await mockApi(page, {
-					'GET /api/papers': () => (screen.papers ?? (() => list([])))(),
+				const handlers = {
+					'GET /api/papers': () => (screen.papers ?? (() => list([paper(1, 'Attention Is All You Need'), paper(2, 'BERT')])))(),
 					'GET /api/collections': () => ({ body: COLLECTIONS }),
-					'GET /api/zotero/status': () => ({ body: CONNECTED })
-				});
+					'GET /api/zotero/status': () => ({ body: CONNECTED }),
+					'GET /api/translate/history': () => ({ body: { items: Array.from({ length: 3 }, (_, i) => historyRecord(i + 1)) } }),
+					'GET /api/papers/:id': () => ({ body: { ...paper(1, 'Attention Is All You Need'), itemKey: 'K', s2PaperId: null, attachment: { type: 'pdf' }, translationCount: 0, analysisCount: 0 } })
+				};
+				const analysisPath = `GET /api/papers/${paperId(1)}/analysis`;
+				handlers[analysisPath] = () => ({ body: analysisOf(paperId(1)) });
+				await mockApi(page, handlers);
 			}
 			await openApp(page, screen.path);
 			if (screen.prepare) await screen.prepare(page);
@@ -803,6 +822,570 @@ async function libraryReal() {
 	await context.close();
 }
 
+// 브라우저의 fetch를 /api/translate에 한해 감싸 조각 응답을 흉내 낸다(route.fulfill은 조각으로 나눠 보내지 못한다).
+// window.__fakeTranslate로 상황을 바꾸고 요청 본문과 취소 횟수를 읽는다.
+function installFakeTranslate() {
+	const realFetch = window.fetch.bind(window);
+	const state = (window.__fakeTranslate = { mode: 'ok', delay: 150, status: 200, code: null, calls: [], aborted: 0 });
+	const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+	window.fetch = async (input, init = {}) => {
+		const target = typeof input === 'string' ? input : input.url;
+		const path = new URL(target, location.href).pathname;
+		if (path !== '/api/translate') return realFetch(input, init);
+		const body = JSON.parse(init.body);
+		state.calls.push(body);
+		if (state.status !== 200) {
+			return new Response(JSON.stringify({ error: { code: state.code, message: 'internal detail from server' } }), {
+				status: state.status,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+		const enc = new TextEncoder();
+		let parts;
+		if (state.mode === 'split') {
+			const all = enc.encode('안녕하세요');
+			parts = [all.slice(0, 1), all.slice(1, 4), all.slice(4, 8), all.slice(8)];
+		} else {
+			parts = [`${body.text} → `, '번역', ' 결과'].map((t) => enc.encode(t));
+		}
+		let i = 0;
+		const stream = new ReadableStream({
+			async pull(controller) {
+				await sleep(state.delay);
+				if (init.signal?.aborted) {
+					state.aborted++;
+					controller.error(new DOMException('aborted', 'AbortError'));
+					return;
+				}
+				if (state.mode === 'cut' && i === 2) {
+					controller.error(new TypeError('network error'));
+					return;
+				}
+				if (i >= parts.length) return controller.close();
+				controller.enqueue(parts[i++]);
+			}
+		});
+		return new Response(stream, { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8', 'x-cache': 'MISS' } });
+	};
+}
+
+const fake = (page, patch) => page.evaluate((p) => Object.assign(window.__fakeTranslate, p), patch);
+const fakeState = (page) => page.evaluate(() => ({ ...window.__fakeTranslate, calls: [...window.__fakeTranslate.calls] }));
+const resultText = (page) => page.getByRole('region', { name: '번역 결과' }).innerText();
+const historyRecord = (n, paperId = null) => ({
+	id: `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
+	sourceText: `source sentence ${n}`,
+	translatedText: `번역문 ${n}`,
+	type: 'sentence',
+	paperId,
+	createdAt: new Date(Date.UTC(2026, 9, 23, 9, 0) - n * 60000).toISOString()
+});
+
+async function translateScreens() {
+	const tag = '번역';
+	const { context } = await loggedInContext({ viewport: { width: 1280, height: 900 } });
+	await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: url });
+	await context.addInitScript(installFakeTranslate);
+	const page = await context.newPage();
+	let history = [];
+	const linked = paper(1, 'Attention Is All You Need');
+	const handlers = {
+		'GET /api/translate/history': (u) => ({
+			body: { items: u.searchParams.get('paperId') ? history.filter((h) => h.paperId === u.searchParams.get('paperId')) : history }
+		}),
+		'GET /api/papers/:id': (u) =>
+			u.pathname.endsWith(linked.id)
+				? { body: { ...linked, itemKey: 'ITEM0001', s2PaperId: null, attachment: { type: 'pdf' }, translationCount: 0, analysisCount: 0 } }
+				: { status: 404, body: { error: { code: 'paper_not_found', message: '' } } }
+	};
+	const calls = await mockApi(page, handlers);
+	const historyCalls = () => calls.filter((c) => c.path === '/api/translate/history');
+	const input = page.getByLabel('원문');
+	const button = (name) => page.getByRole('button', { name, exact: true });
+
+	await openApp(page, '/translate');
+	report((await page.locator('.menu a[aria-current="page"]').innerText()).includes('번역'), `${tag} 메뉴의 번역 항목이 현재 위치`);
+	report((await textOf(page)).includes('아직 번역한 기록이 없습니다'), `${tag} 이력이 비면 안내`);
+
+	// 빈 입력
+	await input.fill('   ');
+	await input.press('Control+Enter');
+	await page.waitForTimeout(300);
+	report((await button('번역').isDisabled()) && (await fakeState(page)).calls.length === 0, `${tag} 빈 입력이면 버튼 비활성, Ctrl+Enter 요청 0번`);
+
+	// 기본 흐름: 첫 조각 뒤 표시, 복사 비활성 → 완료 후 복사 활성
+	await fake(page, { delay: 400 });
+	await input.fill('attention is all you need');
+	await input.press('Control+Enter');
+	await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.textContent?.includes('→'));
+	const midText = await resultText(page);
+	report(
+		midText.includes('attention is all you need →') && !midText.includes('결과') && (await button('복사').isDisabled()) && (await textOf(page)).includes('번역 중'),
+		`${tag} 첫 조각 뒤 글자가 보이고 "번역 중", 복사 버튼 비활성`
+	);
+	report((await page.locator('#translate-input').inputValue()) === 'attention is all you need', `${tag} Ctrl+Enter로 실행해도 입력 유지`);
+	await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.textContent?.includes('결과'));
+	await page.waitForFunction(() => !document.querySelector('[aria-label="번역 결과"]')?.getAttribute('aria-busy')?.includes('true'));
+	const status = page.locator('p.sr-only[role="status"]');
+	report(
+		(await status.innerText()) === '번역이 완료되었습니다' &&
+			(await page.getByRole('region', { name: '번역 결과' }).getAttribute('aria-live')) === 'off',
+		`${tag} 완료 안내는 상태 영역에 한 번, 결과 영역은 조각마다 읽지 않음(aria-live=off)`
+	);
+	report((await fakeState(page)).calls.length === 1, `${tag} Ctrl+Enter 한 번에 요청 1번`);
+	await button('복사').click();
+	await page.getByRole('button', { name: '복사됨' }).waitFor();
+	const clip = await page.evaluate(() => navigator.clipboard.readText());
+	report(clip === 'attention is all you need → 번역 결과', `${tag} 완료 후 복사하면 전체가 클립보드에 들어가고 "복사됨"`);
+	report(historyCalls().length >= 2, `${tag} 번역이 끝나면 이력을 다시 불러옴`);
+
+	// 한글 바이트 분할
+	await fake(page, { mode: 'split', delay: 60 });
+	await button('번역').click();
+	await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.getAttribute('aria-busy') === 'false');
+	const split = await resultText(page);
+	report(split.trim() === '안녕하세요' && !split.includes('\uFFFD'), `${tag} 한글이 조각 경계에서 쪼개져도 깨진 글자 없음`);
+
+	// 중지
+	await fake(page, { mode: 'ok', delay: 500 });
+	await button('번역').click();
+	await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.textContent?.includes('→'));
+	await button('중지').click();
+	await page.getByText('중단됨').waitFor();
+	const afterStop = await resultText(page);
+	report(
+		afterStop.includes('attention is all you need →') && !afterStop.includes('결과') && !(await button('번역').isDisabled()),
+		`${tag} 중지하면 받은 글자는 남고 "중단됨", 번역 버튼 다시 활성`
+	);
+	await input.focus();
+	await button('번역').click();
+	await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.textContent?.includes('→'));
+	await input.press('Escape');
+	await page.getByText('중단됨').waitFor();
+	report(true, `${tag} Escape로도 중지`);
+
+	// 연속 실행
+	await fake(page, { delay: 300 });
+	await input.fill('first sentence');
+	await button('번역').click();
+	await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.textContent?.includes('first sentence'));
+	await input.fill('second sentence');
+	await button('번역').click();
+	await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.getAttribute('aria-busy') === 'false', null, { timeout: 5000 });
+	const consecutive = await resultText(page);
+	report(
+		consecutive.trim() === 'second sentence → 번역 결과' && !consecutive.includes('first'),
+		`${tag} 진행 중 새로 실행하면 이전 요청 취소, 이전 글자 섞이지 않음`
+	);
+
+	// 5000자 자르기
+	await input.fill('a'.repeat(5001));
+	report(
+		(await page.locator('#translate-input').inputValue()).length === 5000 && (await textOf(page)).includes('5000 / 5000'),
+		`${tag} 5000자에서 잘리고 글자 수 5000 / 5000`
+	);
+
+	// 오류 상태
+	await input.fill('error case');
+	const errorCases = [
+		[401, 'unauthenticated', '로그인이 필요합니다', { retry: false, login: true }],
+		[500, 'internal_error', '일시적인 오류', { retry: true, login: false }],
+		[502, 'ai_unavailable', '일시적인 오류', { retry: true, login: false }],
+		[400, 'invalid_request', '입력을 확인해 주세요', { retry: false, login: false }],
+		[413, 'payload_too_large', '입력을 확인해 주세요', { retry: false, login: false }],
+		[503, 'ai_not_configured', '관리자에게 문의', { retry: false, login: false }]
+	];
+	for (const [code, name, text, expected] of errorCases) {
+		await fake(page, { status: code, code: name, mode: 'ok', delay: 50 });
+		await button('번역').click();
+		const alert = page.getByRole('alert').filter({ hasText: text });
+		await alert.waitFor({ timeout: 5000 });
+		const retry = (await alert.getByRole('button', { name: '다시 시도' }).count()) === 1;
+		const login = alert.getByRole('link', { name: '로그인하기' });
+		const loginOk = expected.login
+			? (await login.getAttribute('href')) === '/login?redirect=%2Ftranslate'
+			: (await login.count()) === 0;
+		const body = await page.locator('body').innerText();
+		report(
+			retry === expected.retry &&
+				loginOk &&
+				new URL(page.url()).pathname === '/translate' &&
+				(await page.locator('#translate-input').inputValue()) === 'error case' &&
+				!body.includes(name) &&
+				!body.includes('internal detail'),
+			`${tag} ${code} ${name}: 안내 "${text}", 다시 시도 ${expected.retry ? '있음' : '없음'}${expected.login ? ', 로그인 링크' : ''}, 입력 유지, 코드 문자열 노출 없음`
+		);
+	}
+	await fake(page, { status: 500, code: 'internal_error' });
+	await button('번역').click();
+	await page.getByRole('alert').filter({ hasText: '일시적인 오류' }).waitFor();
+	const beforeRetry = (await fakeState(page)).calls.length;
+	await fake(page, { status: 200, code: null, delay: 50 });
+	await page.getByRole('button', { name: '다시 시도' }).click();
+	await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.textContent?.includes('결과'));
+	const retried = (await fakeState(page)).calls;
+	report(retried.length === beforeRetry + 1 && retried.at(-1).text === 'error case', `${tag} 다시 시도는 같은 입력으로 다시 요청`);
+
+	await fake(page, { mode: 'cut', delay: 80 });
+	await button('번역').click();
+	await page.getByRole('alert').filter({ hasText: '연결이 끊겨' }).waitFor();
+	report(
+		(await resultText(page)).includes('error case → 번역') &&
+			(await page.getByRole('alert').filter({ hasText: '연결이 끊겨' }).getByRole('button', { name: '다시 시도' }).count()) === 1,
+		`${tag} 도중 끊기면 받은 글자 유지와 "다시 시도"`
+	);
+	await fake(page, { mode: 'ok' });
+
+	// 이력: 20개씩, 선택하면 요청 없이 채우기
+	history = Array.from({ length: 45 }, (_, i) => historyRecord(i + 1));
+	await openApp(page, '/translate');
+	await page.locator('.record').first().waitFor();
+	const count = () => page.locator('.record').count();
+	const first = await count();
+	await button('더 보기').click();
+	const second = await count();
+	await button('더 보기').click();
+	report(first === 20 && second === 40 && (await count()) === 45 && (await button('더 보기').count()) === 0, `${tag} 이력 20개 → 더 보기 40개 → 45개`);
+	const lastHistory = historyCalls().at(-1);
+	report(lastHistory.params.get('limit') === '200' && !lastHistory.params.has('paperId'), `${tag} 이력은 limit=200, 연결 없으면 paperId 없이`);
+	const callsBefore = (await fakeState(page)).calls.length;
+	await page.locator('.record').nth(2).click();
+	report(
+		(await page.locator('#translate-input').inputValue()) === 'source sentence 3' &&
+			(await resultText(page)).trim() === '번역문 3' &&
+			(await fakeState(page)).calls.length === callsBefore,
+		`${tag} 이력 항목을 고르면 요청 없이 원문과 번역문 채움`
+	);
+
+	// 논문 연결
+	history = [historyRecord(1, linked.id), historyRecord(2)];
+	await openApp(page, `/translate?paperId=${linked.id}`);
+	await page.getByText('Attention Is All You Need').first().waitFor();
+	await input.fill('linked sentence');
+	await button('번역').click();
+	await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.getAttribute('aria-busy') === 'false');
+	report((await fakeState(page)).calls.at(-1).paperId === linked.id, `${tag} 연결된 논문 제목 표시, 요청 본문에 paperId`);
+
+	// 설정 패널: 연결 논문과 이력 범위
+	const panel = page.locator('.panel');
+	report(
+		(await panel.getByRole('switch', { name: '자동 번역' }).getAttribute('aria-checked')) === 'false' &&
+			(await panel.getByRole('button', { name: '연결 해제' }).count()) === 1,
+		`${tag} 패널에 자동 번역(꺼짐)과 연결 해제`
+	);
+	await panel.getByLabel('이 논문만').check();
+	await page.waitForTimeout(300);
+	report(historyCalls().at(-1).params.get('paperId') === linked.id && (await count()) === 1, `${tag} 이 논문만이면 history?paperId=로 다시 조회`);
+	await panel.getByRole('button', { name: '연결 해제' }).click();
+	await page.waitForURL((u) => !u.searchParams.has('paperId'));
+	await input.fill('unlinked sentence');
+	await button('번역').click();
+	await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.getAttribute('aria-busy') === 'false');
+	report(
+		!('paperId' in (await fakeState(page)).calls.at(-1)) &&
+			(await panel.getByRole('button', { name: '연결 해제' }).count()) === 0 &&
+			(await panel.getByText('이력 범위').count()) === 0,
+		`${tag} 연결 해제 뒤 주소와 요청에서 paperId가 빠지고 패널의 연결·범위 항목 숨김`
+	);
+
+	// UUID가 아닌 paperId와 없는 논문
+	const paperCallsBefore = calls.filter((c) => c.path.startsWith('/api/papers/')).length;
+	await openApp(page, '/translate?paperId=abc');
+	await page.getByRole('alert').filter({ hasText: '논문을 찾을 수 없습니다' }).waitFor();
+	report(calls.filter((c) => c.path.startsWith('/api/papers/')).length === paperCallsBefore, `${tag} UUID가 아닌 paperId는 API를 부르지 않고 "논문을 찾을 수 없음"`);
+	await openApp(page, `/translate?paperId=${paperId(99)}`);
+	await page.getByRole('alert').filter({ hasText: '논문을 찾을 수 없습니다' }).waitFor();
+	await page.getByRole('button', { name: '연결 없이 계속' }).click();
+	await page.waitForURL((u) => !u.searchParams.has('paperId'));
+	await input.fill('after missing');
+	await button('번역').click();
+	await page.waitForFunction(() => document.querySelector('[aria-label="번역 결과"]')?.getAttribute('aria-busy') === 'false');
+	report(!('paperId' in (await fakeState(page)).calls.at(-1)), `${tag} 없는 논문에서 연결 없이 계속하면 paperId 없이 번역`);
+
+	// 자동 번역
+	await openApp(page, '/translate');
+	await input.fill('typing without auto');
+	await page.waitForTimeout(700);
+	report((await fakeState(page)).calls.length === 0, `${tag} 자동 번역 꺼짐이면 입력만으로 요청 0번`);
+	await panel.getByRole('switch', { name: '자동 번역' }).click();
+	await fake(page, { delay: 400 });
+	await input.fill('');
+	await input.pressSequentially('auto one', { delay: 40 });
+	await page.waitForFunction(() => window.__fakeTranslate.calls.length === 1, null, { timeout: 3000 });
+	await page.waitForTimeout(150);
+	report((await fakeState(page)).calls.length === 1, `${tag} 자동 번역을 켜고 0.3초 멈추면 요청 1번`);
+	await input.pressSequentially(' more', { delay: 40 });
+	await page.waitForFunction(() => window.__fakeTranslate.calls.length === 2, null, { timeout: 3000 });
+	const autoState = await fakeState(page);
+	report(autoState.aborted >= 1 && autoState.calls.at(-1).text === 'auto one more', `${tag} 입력을 계속하면 이전 요청 취소 후 다시 요청`);
+	await page.reload();
+	await page.waitForFunction(() => document.body.dataset.hydrated === '1');
+	report((await panel.getByRole('switch', { name: '자동 번역' }).getAttribute('aria-checked')) === 'true', `${tag} 새로 고침 뒤에도 자동 번역 켜짐`);
+	await panel.getByRole('switch', { name: '자동 번역' }).click();
+	await context.close();
+
+	// 저장소를 막은 문맥
+	const blocked = await loggedInContext({ viewport: { width: 1280, height: 900 } });
+	await blocked.context.addInitScript(() => {
+		Object.defineProperty(window, 'localStorage', {
+			get() {
+				throw new DOMException('denied', 'SecurityError');
+			}
+		});
+	});
+	const blockedPage = await blocked.context.newPage();
+	await mockApi(blockedPage, { 'GET /api/translate/history': () => ({ body: { items: [] } }) });
+	const errors = [];
+	blockedPage.on('pageerror', (e) => errors.push(e.message));
+	await openApp(blockedPage, '/translate');
+	const blockedSwitch = blockedPage.locator('.panel').getByRole('switch', { name: '자동 번역' });
+	const initial = await blockedSwitch.getAttribute('aria-checked');
+	await blockedSwitch.click();
+	report(
+		initial === 'false' && (await blockedSwitch.getAttribute('aria-checked')) === 'true' && errors.length === 0 && (await blockedPage.getByRole('alert').count()) === 0,
+		`${tag} 저장소가 막혀도 기본값(꺼짐)으로 열리고 오류 없음`
+	);
+
+	// Tab 순서: 입력창 → 번역 → 중지(진행 중일 때만 활성) → 복사 → 이력 항목
+	await blockedPage.unrouteAll({ behavior: 'ignoreErrors' });
+	await mockApi(blockedPage, { 'GET /api/translate/history': () => ({ body: { items: [historyRecord(1)] } }) });
+	await openApp(blockedPage, '/translate');
+	await blockedPage.locator('.record').first().waitFor();
+	await blockedPage.locator('.record').first().click();
+	await blockedPage.getByLabel('원문').focus();
+	const order = [];
+	for (let i = 0; i < 3; i++) {
+		await blockedPage.keyboard.press('Tab');
+		order.push(
+			await blockedPage.evaluate(() => {
+				const el = document.activeElement;
+				const outline = getComputedStyle(el).outlineStyle !== 'none';
+				return `${el.classList.contains('record') ? '이력' : el.textContent.trim()}${outline ? '' : '(윤곽 없음)'}`;
+			})
+		);
+	}
+	report(order.join(' → ') === '번역 → 복사 → 이력', `${tag} Tab 순서 입력창 → ${order.join(' → ')}(중지는 진행 중에만 활성이라 건너뜀), 포커스 윤곽 표시`);
+	await blocked.context.close();
+
+	// 390px: 설정 버튼으로 패널이 겹쳐 열리고 포커스가 안으로
+	const narrow = await loggedInContext({ viewport: { width: 390, height: 800 } });
+	const narrowPage = await narrow.context.newPage();
+	await mockApi(narrowPage, { 'GET /api/translate/history': () => ({ body: { items: [] } }) });
+	await openApp(narrowPage, '/translate');
+	await narrowPage.getByRole('button', { name: '설정 열기' }).click();
+	await narrowPage.waitForFunction(() => document.activeElement?.closest('.panel'));
+	report(
+		(await narrowPage.locator('.panel').isVisible()) && (await narrowPage.locator('.panel').getByRole('switch', { name: '자동 번역' }).isVisible()),
+		`${tag} 390px에서 설정 버튼으로 패널이 겹쳐 열리고 포커스가 패널 안으로`
+	);
+	await narrow.context.close();
+}
+
+// openapi.yaml의 Analysis 형식을 따른 고정 데이터
+const analysisOf = (id, extra = {}) => ({
+	paperId: id,
+	summary: '긴 문장 번역의 병렬화가 어렵다.\n어텐션만으로 인코더·디코더를 만든다.\n번역 품질과 학습 속도가 모두 좋아졌다.',
+	keywords: ['Transformer', 'Attention'],
+	domain: '자연어 처리',
+	problemShort: '긴 문장 번역의 병렬화가 어렵다.',
+	problem: '순환 신경망은 순서대로 계산해야 해서 학습을 병렬로 나누기 어렵다.',
+	methodShort: '어텐션만으로 인코더·디코더를 만든다.',
+	method: '셀프 어텐션과 멀티헤드 어텐션으로 순환 구조를 대신한다.',
+	conclusionShort: '번역 품질과 학습 속도가 모두 좋아졌다.',
+	conclusion: 'WMT 2014 영어-독일어에서 BLEU 28.4를 얻었다.',
+	basic: { title: 'Attention Is All You Need', year: 2017, venue: 'NeurIPS', doi: '10.48550/arXiv.1706.03762', arxivId: '1706.03762', citationCount: 100000 },
+	authors: [{ name: 'Ashish Vaswani', hIndex: 30, citationCount: 150000 }],
+	journalScore: { matchedTitle: 'Nature Reviews Molecular Cell Biology', sjr: 35.568, quartile: 'Q1', issn: '14710072', type: 'journal', country: 'United Kingdom' },
+	sources: { pdf: true, semanticScholar: true },
+	...extra
+});
+const NULL_SCORE = { matchedTitle: null, sjr: null, quartile: null, issn: null, type: null, country: null };
+const apiError = (status, code) => ({ status, body: { error: { code, message: 'internal detail from server' } } });
+
+async function analyzeScreens() {
+	const tag = '분석';
+	const { context } = await loggedInContext({ viewport: { width: 1280, height: 900 } });
+	await context.addInitScript(installFakeTranslate);
+	const page = await context.newPage();
+	const papers = [paper(1, 'Attention Is All You Need'), paper(2, 'BERT'), paper(3, 'ViT')];
+	let papersHandler = (u) => list(u.searchParams.get('query') === 'attention' ? [papers[0], papers[1]] : papers);
+	let getHandler = () => apiError(404, 'analysis_not_found');
+	let postHandler = () => ({ body: analysisOf(paperId(1)) });
+	const handlers = {
+		'GET /api/papers': (u) => papersHandler(u),
+		'GET /api/papers/:id': (u) => {
+			const found = papers.find((p) => u.pathname.endsWith(p.id));
+			return found
+				? { body: { ...found, itemKey: 'K', s2PaperId: null, attachment: { type: 'pdf' }, translationCount: 0, analysisCount: 0 } }
+				: apiError(404, 'paper_not_found');
+		},
+		'GET /api/papers/:id/analysis': () => getHandler(),
+		'POST /api/papers/:id/analysis': () => postHandler(),
+		'GET /api/translate/history': () => ({ body: { items: [] } }),
+		'GET /api/collections': () => ({ body: [] }),
+		'GET /api/zotero/status': () => ({ body: CONNECTED })
+	};
+	// 경로 끝 UUID만 :id로 바꾸는 mockApi와 달리 분석 경로는 가운데에 UUID가 있어 따로 맞춘다
+	const calls = await mockApi(page, new Proxy(handlers, {
+		get(target, key) {
+			if (typeof key === 'string') {
+				const m = key.match(/^(GET|POST) \/api\/papers\/[0-9a-f-]{36}\/analysis$/);
+				if (m) return target[`${m[1]} /api/papers/:id/analysis`];
+			}
+			return target[key];
+		}
+	}));
+	const count = (method, suffix) => calls.filter((c) => c.method === method && c.path.endsWith(suffix)).length;
+
+	// 논문 선택기
+	await openApp(page, '/analyze');
+	await page.getByRole('option').first().waitFor();
+	report((await page.getByRole('option').count()) === 3, `${tag} paperId 없이 열면 선택기에 최근 논문`);
+	const search = page.getByRole('searchbox', { name: '분석할 논문 검색' });
+	await search.click();
+	await page.keyboard.type('attention', { delay: 40 });
+	await page.waitForFunction(() => document.querySelectorAll('[role="option"]').length === 2);
+	const last = calls.filter((c) => c.path === '/api/papers').at(-1);
+	report(last.params.get('query') === 'attention' && last.params.get('limit') === '20', `${tag} 검색 요청 query=attention&limit=20`);
+	await page.keyboard.press('ArrowDown');
+	await page.keyboard.press('Enter');
+	await page.waitForURL((u) => u.searchParams.get('paperId') === paperId(2));
+	report(true, `${tag} 화살표와 Enter로 고르면 /analyze?paperId=<id>`);
+
+	papersHandler = (u) => list(u.searchParams.get('query') ? [] : []);
+	await openApp(page, '/analyze');
+	await page.getByText('아직 서재에 논문이 없습니다').waitFor();
+	report((await page.getByRole('link', { name: '서재로 가기' }).getAttribute('href')) === '/library', `${tag} 서재가 비면 안내와 서재 링크`);
+	await search.fill('zzz');
+	await page.getByText('검색어에 맞는 논문이 없습니다').waitFor();
+	report((await search.inputValue()) === 'zzz', `${tag} 검색 결과가 없으면 안내, 검색어 유지`);
+	papersHandler = (u) => list(u.searchParams.get('query') === 'attention' ? [papers[0], papers[1]] : papers);
+
+	// 분석되지 않은 논문: 열 때 POST 0번, 시작하면 POST 1번
+	const target = `/analyze?paperId=${paperId(1)}`;
+	const getsAtOpen = count('GET', '/analysis');
+	await openApp(page, target);
+	await page.getByRole('button', { name: '분석 시작' }).waitFor();
+	await page.waitForTimeout(300);
+	report(count('POST', '/analysis') === 0 && count('GET', '/analysis') === getsAtOpen + 1, `${tag} 열면 GET만 보내고 저장된 분석이 없으면 "분석 시작"`);
+	postHandler = () => ({ body: analysisOf(paperId(1)), delay: 1500 });
+	await page.getByRole('button', { name: '분석 시작' }).click();
+	await page.getByText('분석 중입니다').waitFor();
+	const busyButton = page.getByRole('button', { name: '분석 시작' });
+	report((await busyButton.getAttribute('aria-busy')) === 'true', `${tag} 시작하면 "분석 중"과 버튼 진행 중 표시`);
+	await busyButton.click({ force: true });
+	await busyButton.click({ force: true });
+	await page.locator('#analysis-title').waitFor();
+	report(count('POST', '/analysis') === 1, `${tag} 분석 중에 여러 번 눌러도 POST 1번`);
+
+	// 결과 표시
+	const resultText = await page.locator('.result').innerText();
+	report(
+		resultText.includes('긴 문장 번역의 병렬화가 어렵다.') &&
+			resultText.includes('어텐션만으로') &&
+			(await page.locator('.quartile').innerText()) === 'Q1' &&
+			resultText.includes('35.568') &&
+			resultText.includes('Nature Reviews Molecular Cell Biology'),
+		`${tag} 세 줄 요약, Q1 배지, SJR 35.568, 정식 이름 표시`
+	);
+	report(
+		!(await page.locator('.result details').evaluate((d) => d.open)) && resultText.includes('자세히 보기'),
+		`${tag} 자세한 설명은 접힌 채 펼쳐 보기`
+	);
+	report(
+		(await page.getByRole('link', { name: '이 논문 번역하기' }).getAttribute('href')) === `/translate?paperId=${paperId(1)}` &&
+			(await page.getByRole('link', { name: '논문 허브로' }).getAttribute('href')) === `/papers/${paperId(1)}`,
+		`${tag} 번역 링크 /translate?paperId=<id>와 논문 허브 링크`
+	);
+	await page.screenshot({ path: `${outDir}/analyze-result.png`, fullPage: true });
+
+	// 저장된 분석이 있으면 바로 결과, POST 0번
+	getHandler = () => ({ body: analysisOf(paperId(1), { authors: [], basic: { ...analysisOf(paperId(1)).basic, doi: null }, journalScore: NULL_SCORE }) });
+	const postsBefore = count('POST', '/analysis');
+	await openApp(page, target);
+	await page.locator('#analysis-title').waitFor();
+	const saved = await page.locator('.result').innerText();
+	report(count('POST', '/analysis') === postsBefore, `${tag} 저장된 분석이 있으면 바로 결과, POST 0번`);
+	report(saved.includes('순위표에서 찾지 못한 학회·저널입니다') && (await page.locator('.quartile').count()) === 0, `${tag} 저널 점수 여섯 값이 모두 null이면 찾지 못했다는 안내`);
+	report(!saved.includes('저자') && !saved.includes('DOI') && saved.includes('arXiv 1706.03762'), `${tag} 빈 저자와 null DOI는 숨기고 나머지는 표시`);
+
+	// 설정 패널: 다시 불러오기, 변경
+	const panel = page.locator('.panel');
+	await panel.getByText('Attention Is All You Need').waitFor();
+	const getsBefore = count('GET', '/analysis');
+	await panel.getByRole('button', { name: '저장된 결과 다시 불러오기' }).click();
+	await page.waitForTimeout(400);
+	report(count('GET', '/analysis') === getsBefore + 1 && count('POST', '/analysis') === postsBefore, `${tag} 다시 불러오기는 GET 1번 추가, POST 0번`);
+	await panel.getByRole('link', { name: '변경' }).click();
+	await page.waitForURL((u) => u.pathname === '/analyze' && !u.searchParams.has('paperId'));
+	await page.getByRole('option').first().waitFor();
+	report(true, `${tag} 패널의 변경은 /analyze 선택기로`);
+
+	// 새로 고침하면 GET부터 다시
+	getHandler = () => apiError(404, 'analysis_not_found');
+	postHandler = () => ({ body: analysisOf(paperId(1)), delay: 3000 });
+	await openApp(page, target);
+	await page.getByRole('button', { name: '분석 시작' }).click();
+	await page.getByText('분석 중입니다').waitFor();
+	const getsBeforeReload = count('GET', '/analysis');
+	await page.reload();
+	await page.waitForFunction(() => document.body.dataset.hydrated === '1');
+	await page.getByRole('button', { name: '분석 시작' }).waitFor();
+	report(count('GET', '/analysis') === getsBeforeReload + 1, `${tag} 분석 중 새로 고침하면 GET부터 다시, 저장 전이면 "분석 시작"`);
+
+	// 오류 상태
+	const cases = [
+		[422, 'no_source_for_analysis', 'PDF나 외부 정보가 없는', { retry: false }],
+		[500, 'internal_error', '일시적인 오류', { retry: true }],
+		[502, 'upstream_unavailable', '일시적인 오류', { retry: true }],
+		[401, 'unauthenticated', '로그인이 필요합니다', { retry: false, login: true }],
+		[404, 'paper_not_found', '논문을 찾을 수 없습니다', { retry: false, picker: true }]
+	];
+	for (const [status, code, text, expected] of cases) {
+		postHandler = () => apiError(status, code);
+		await openApp(page, target);
+		await page.getByRole('button', { name: '분석 시작' }).click();
+		const alert = page.getByRole('alert').filter({ hasText: text });
+		await alert.waitFor();
+		const hasRetry = (await alert.getByRole('button', { name: '다시 시도' }).count()) === 1;
+		let extra = true;
+		if (expected.login) extra = (await alert.getByRole('link', { name: '로그인하기' }).getAttribute('href')) === `/login?redirect=${encodeURIComponent(target)}`;
+		if (expected.picker) extra = (await alert.getByRole('link', { name: '다른 논문 고르기' }).getAttribute('href')) === '/analyze';
+		const body = await page.locator('body').innerText();
+		report(
+			hasRetry === expected.retry && extra && new URL(page.url()).pathname === '/analyze' && !body.includes(code) && !body.includes('internal detail'),
+			`${tag} ${status} ${code}: "${text}", 다시 시도 ${expected.retry ? '있음' : '없음'}${expected.login ? ', 로그인 링크(이동 없음)' : ''}${expected.picker ? ', 선택기 링크' : ''}`
+		);
+	}
+	postHandler = () => apiError(500, 'internal_error');
+	await openApp(page, target);
+	await page.getByRole('button', { name: '분석 시작' }).click();
+	await page.getByRole('button', { name: '다시 시도' }).waitFor();
+	const postsBeforeRetry = count('POST', '/analysis');
+	postHandler = () => ({ body: analysisOf(paperId(1)) });
+	await page.getByRole('button', { name: '다시 시도' }).click();
+	await page.locator('#analysis-title').waitFor();
+	report(count('POST', '/analysis') === postsBeforeRetry + 1, `${tag} 다시 시도는 분석을 다시 요청`);
+
+	await openApp(page, '/analyze?paperId=not-a-uuid');
+	await page.getByRole('alert').filter({ hasText: '논문을 찾을 수 없습니다' }).waitFor();
+	report(true, `${tag} UUID가 아닌 paperId는 "논문을 찾을 수 없음"`);
+
+	// 화면을 옮기면 패널 내용이 바뀜
+	getHandler = () => ({ body: analysisOf(paperId(1)) });
+	await openApp(page, '/translate');
+	await panel.getByRole('switch', { name: '자동 번역' }).waitFor();
+	await page.locator('.menu').getByRole('link', { name: '분석' }).click();
+	await page.waitForURL((u) => u.pathname === '/analyze');
+	await panel.getByText('분석할 논문을 고르면').waitFor();
+	report((await panel.getByRole('switch').count()) === 0, `${tag} 번역 → 분석으로 가면 패널이 분석 설정으로 바뀜`);
+	await page.locator('.menu').getByRole('link', { name: '서재' }).click();
+	await page.waitForURL((u) => u.pathname === '/library');
+	await panel.getByText('선택한 도구의 설정이 여기에 표시됩니다.').waitFor();
+	report(true, `${tag} 서재로 가면 패널이 기본 안내문으로 돌아옴`);
+	await context.close();
+}
+
 // ---- 실행 ----
 
 for (const scheme of ['light', 'dark']) {
@@ -814,6 +1397,8 @@ if (want('library')) await libraryMock();
 if (want('settings')) await settingsMock();
 if (want('layout')) await layouts();
 if (want('library-real')) await libraryReal();
+if (want('translate')) await translateScreens();
+if (want('analyze')) await analyzeScreens();
 if (dbUsed) cleanupDb();
 
 await browser.close();
