@@ -57,11 +57,15 @@
 
 #### Scenario: 세션 만료
 - **WHEN** 번역 요청이 401 `unauthenticated`를 받는다
-- **THEN** 결과 영역에 로그인이 필요하다는 안내와 로그인 화면 링크가 보이고 입력은 그대로 남는다
+- **THEN** 결과 영역에 로그인이 필요하다는 안내와 로그인 화면 링크(`/login?redirect=<현재 주소>`)가 보이고, 화면은 자동으로 이동하지 않으며 입력은 그대로 남는다
 
 #### Scenario: 서버 오류
-- **WHEN** 번역 요청이 500 `internal_error`를 받는다
+- **WHEN** 번역 요청이 500 `internal_error` 또는 502 `ai_unavailable`을 받는다
 - **THEN** 결과 영역에 일시적인 오류라는 안내와 "다시 시도" 버튼이 보이고, 누르면 같은 입력으로 다시 요청한다
+
+#### Scenario: AI 미설정
+- **WHEN** 번역 요청이 503 `ai_not_configured`를 받는다
+- **THEN** 결과 영역에 관리자에게 문의하라는 안내가 보이고 "다시 시도" 버튼은 보이지 않는다
 
 #### Scenario: 서버가 거부한 입력
 - **WHEN** 번역 요청이 400 `invalid_request` 또는 413 `payload_too_large`를 받는다

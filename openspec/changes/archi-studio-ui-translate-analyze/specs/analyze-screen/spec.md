@@ -60,26 +60,26 @@
 
 #### Scenario: 세션 만료
 - **WHEN** 분석 조회나 실행이 401 `unauthenticated`를 받는다
-- **THEN** 로그인이 필요하다는 안내와 로그인 화면 링크가 보인다
+- **THEN** 로그인이 필요하다는 안내와 로그인 화면 링크(`/login?redirect=<현재 주소>`)가 보이고, 화면은 자동으로 이동하지 않는다
 
 #### Scenario: 서버 오류
-- **WHEN** 분석 실행이 500 `internal_error`를 받는다
+- **WHEN** 분석 실행이 500 `internal_error` 또는 502 `upstream_unavailable`을 받는다
 - **THEN** 일시적인 오류라는 안내와 "다시 시도" 버튼이 보이고, 누르면 분석을 다시 요청한다
 
 ### Requirement: 분석 결과 표시
-시스템은 응답의 `summary`를 본문 텍스트로, `journalScore`의 항목을 이름과 값의 목록으로 보여줘야 한다(SHALL). `journalScore`에 `quartile`(Q1~Q4) 값이 있으면 등급 배지로 따로 강조한다. `journalScore`가 비어 있으면 저널 점수 정보가 없다고 안내하고, 알 수 없는 항목은 숨기지 않고 이름 그대로 목록에 보여준다(MUST).
+시스템은 분석 응답(`paper-analysis` 스펙의 `Analysis`)을 다음 묶음으로 보여줘야 한다(SHALL). 기본 정보(제목, 연도, 학회·저널, 인용 수, DOI·arXiv 번호), 한 줄 요약(`problemShort`, `methodShort`, `conclusionShort`), 펼쳐 보는 자세한 설명(`problem`, `method`, `conclusion`), 분야와 키워드, 저자(최대 3명, h-index와 인용 수), 저널 점수(분위 배지, SJR, 정식 이름, 종류, 나라), 분석에 쓴 자료(PDF, Semantic Scholar). 값이 null이거나 목록이 비어 있는 항목은 숨기고, 저널 점수의 여섯 값이 모두 null이면 "순위표에서 찾지 못한 학회·저널"이라고 안내한다(MUST). 분위 배지의 색은 디자인 토큰만 쓴다.
 
 #### Scenario: 요약과 저널 점수
-- **WHEN** 분석 응답이 `summary` 문자열과 `journalScore`로 `{ "quartile": "Q1", "sjr": "2.1" }`을 담고 있다
-- **THEN** 결과 영역에 요약 본문이 보이고, `Q1` 등급 배지와 `sjr 2.1` 항목이 보인다
+- **WHEN** 분석 응답의 `problemShort`, `methodShort`, `conclusionShort`가 값이고 `journalScore`가 `{ "quartile": "Q1", "sjr": 35.568, "matchedTitle": "Nature Reviews Molecular Cell Biology", ... }`이다
+- **THEN** 결과 영역에 세 줄 요약과 `Q1` 배지, `SJR 35.568`, 정식 이름이 보인다
 
 #### Scenario: 저널 점수 없음
-- **WHEN** 분석 응답의 `journalScore`가 빈 객체다
-- **THEN** 저널 점수 영역에 점수 정보가 없다는 안내가 보인다
+- **WHEN** 분석 응답의 `journalScore` 여섯 값이 모두 null이다
+- **THEN** 저널 점수 영역에 순위표에서 찾지 못했다는 안내가 보인다
 
-#### Scenario: 알 수 없는 항목
-- **WHEN** `journalScore`에 화면이 따로 다루지 않는 항목 `country`가 들어 있다
-- **THEN** 그 항목도 이름과 값으로 목록에 표시된다
+#### Scenario: 빈 값 숨김
+- **WHEN** `authors`가 빈 배열이고 `basic.doi`가 null이다
+- **THEN** 저자 묶음과 DOI 항목은 보이지 않고 나머지 항목은 그대로 보인다
 
 ### Requirement: 다른 화면으로 이동
 시스템은 분석 결과가 보이는 화면에서 같은 논문의 번역 화면(`/translate?paperId=<id>`)과 논문 허브(`/papers/<id>`)로 가는 링크를 보여줘야 한다(SHALL).
