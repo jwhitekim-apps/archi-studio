@@ -11,7 +11,7 @@ const text = await getAiProvider('analysis').complete({ system, user, maxTokens:
 ```
 
 - `complete`: 전체 응답을 앞뒤 공백을 지운 문자열로 돌려준다. 기본 등급은 `fast`.
-- `stream`: 글자 조각을 도착하는 대로 내보낸다. 기본 등급은 `smart`. `signal`로 취소하면 오류 없이 끝나고 모델 쪽 연결도 닫힌다.
+- `stream`: 글자 조각을 도착하는 대로 내보낸다. 기본 등급은 `smart`. 글자를 하나도 못 내보내고 끝나면 `ai_empty_response`를 던진다. `signal`로 취소하면 오류 없이 끝나고 모델 쪽 연결도 닫힌다.
 - JSON 응답이 필요하면 지시문에 `JSON_OUTPUT_CONTRACT`를 붙이고 `extractJson(text)`로 읽는다.
 - 시험에서는 `createFakeProvider({ responses, chunks, error })`를 넣어 네트워크 없이 돌린다.
 
@@ -45,7 +45,7 @@ Gemini 기본 모델 이름은 벨루 값을 그대로 가져왔고 현재 공�
 | `ai_not_configured` | 키·모델·주소 누락, 알 수 없는 제공자나 등급, 평문 `http://` 로컬 주소 | 500 |
 | `ai_unavailable` | 5xx, 연결 실패, 시간 초과, 그 밖의 4xx(형식 오류, 키 거부, 없는 모델), 스트리밍 도중 끊김, 취소된 `complete` | 502 |
 | `ai_rate_limited` | 429가 재시도 뒤에도 계속될 때 | 429 |
-| `ai_empty_response` | 응답 본문이 비었을 때(안전 필터 차단, 출력 길이 부족). 로그에 종료 이유가 남는다 | 502 |
+| `ai_empty_response` | 응답 본문이 비었거나 `stream`이 글자 없이 끝났을 때(안전 필터 차단, 출력 길이 부족). 로그에 종료 이유가 남는다 | 502 |
 | `ai_invalid_json` | `extractJson`이 JSON 객체를 읽지 못했을 때 | 502 |
 
 재시도는 429, 408, 5xx, 연결 실패에만 두 번 한다(500ms, 1500ms 대기). `Retry-After` 헤더가 있으면 그 값을 쓰되 5초를 넘지 않는다. 스트리밍은 첫 조각이 나가기 전에만 다시 시도한다. SDK 자체 재시도는 꺼 두었다.
@@ -80,6 +80,6 @@ AI_LIVE_TEST=1 AI_PROVIDER=local npm run test:ai-live    # 집 서버에서, 학
 실패하면 오류 코드와 단계(주소, 인증서, 인증, 응답)를 여기에 적는다.
 
 - **학교 모델(`local`, 2026-10-23 확인)**: 비서와 같은 주소·키·모델(`qwen3.6:35b-a3b`)과 `NODE_EXTRA_CA_CERTS=/etc/nginx/llm-origin.crt`로 `complete`와 `stream`이 통과했다.
-- **학교 모델은 답하기 전에 생각한다**: 생각 글자도 출력 한도를 쓴다. 한도 16에서는 늘, 1024에서는 8번 중 1번 꼴로 생각만 하다 끝났다(종료 이유 `length`). `complete`는 `ai_empty_response`가 되지만 `stream`은 글자 없이 조용히 끝난다. 한도는 4096 이상을 준다.
+- **학교 모델은 답하기 전에 생각한다**: 생각 글자도 출력 한도를 쓴다. 한도 16에서는 늘, 1024에서는 8번 중 1번 꼴로 생각만 하다 끝났다(종료 이유 `length`). 이때 `complete`와 `stream` 모두 `ai_empty_response`를 던지고 로그에 `finishReason: "length"`가 남는다. 한도는 4096 이상을 준다.
 - **학교 모델은 동시 요청을 줄 세운다**: 8개를 한꺼번에 보내면 하나가 4초, 마지막이 41초 걸렸다. 문단마다 부르는 번역은 동시에 여러 개를 보내지 않는 편이 낫다.
 - **Gemini(2026-10-23)**: 받은 키의 프로젝트가 선불 결제에 묶여 있고 크레딧이 바닥나 HTTP 402로 막혔다. 무료 등급으로 쓰려면 그 프로젝트의 결제를 끈다.

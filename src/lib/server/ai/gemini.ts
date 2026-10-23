@@ -1,7 +1,7 @@
 // Gemini 제공자(@google/genai). 재시도는 공용 계층이 하므로 SDK 재시도는 한 번(재시도 없음)으로 둔다.
 import { GoogleGenAI } from '@google/genai';
 import type { AiModels } from './config';
-import { BaseProvider, type ProviderDeps, type RawCompletion, type ResolvedRequest } from './provider';
+import { BaseProvider, type ProviderDeps, type RawCompletion, type ResolvedRequest, type StreamMeta } from './provider';
 
 interface GeminiParams {
 	model: string;
@@ -55,9 +55,11 @@ export class GeminiProvider extends BaseProvider {
 		return { text: response.text ?? '', finishReason: response.candidates?.[0]?.finishReason };
 	}
 
-	protected async *streamOnce(req: ResolvedRequest): AsyncIterable<string> {
+	protected async *streamOnce(req: ResolvedRequest, meta: StreamMeta): AsyncIterable<string> {
 		const chunks = await this.client.models.generateContentStream(this.params(req));
 		for await (const chunk of chunks) {
+			const finishReason = chunk.candidates?.[0]?.finishReason;
+			if (finishReason) meta.finishReason = finishReason;
 			if (chunk.text) yield chunk.text;
 		}
 	}

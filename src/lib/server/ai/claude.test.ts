@@ -93,6 +93,21 @@ describe('ClaudeProvider.stream', () => {
 		expect(calls[0].params).toMatchObject({ model: 'claude-smart-test', stream: true });
 	});
 
+	it('글자 없이 끝나면 ai_empty_response이고 종료 이유가 로그에 남는다', async () => {
+		const deps = testDeps();
+		const { client, calls } = fakeClient(() =>
+			(async function* () {
+				yield { type: 'content_block_delta', delta: { type: 'text_delta', text: '' } };
+				yield { type: 'message_delta', delta: { stop_reason: 'max_tokens' } };
+			})()
+		);
+		const err = await collect(new ClaudeProvider(client, MODELS, deps).stream({ user: 'q', maxTokens: 10 })).catch((e) => e);
+		expect(err.code).toBe('ai_empty_response');
+		expect(err.message).toContain('max_tokens');
+		expect(deps.logs).toEqual([{ provider: 'claude', tier: 'smart', ms: 0, ok: false, code: 'ai_empty_response', finishReason: 'max_tokens' }]);
+		expect(calls).toHaveLength(1);
+	});
+
 	it('취소하면 더 내보내지 않고 모델 쪽 스트림을 닫는다', async () => {
 		let closed = false;
 		const controller = new AbortController();
@@ -113,6 +128,19 @@ describe('ClaudeProvider.stream', () => {
 		expect(out).toEqual(['하나']);
 		expect(closed).toBe(true);
 		expect(calls[0].signal).toBe(controller.signal);
+	});
+
+	it('조각이 오기 전에 취소되면 빈 응답 오류 없이 끝난다', async () => {
+		const controller = new AbortController();
+		const { client } = fakeClient(() =>
+			(async function* () {
+				controller.abort();
+				yield { type: 'message_stop' };
+			})()
+		);
+		const deps = testDeps();
+		expect(await collect(new ClaudeProvider(client, MODELS, deps).stream({ user: 'q', maxTokens: 10, signal: controller.signal }))).toEqual([]);
+		expect(deps.logs[0]).toMatchObject({ ok: true });
 	});
 
 	it('조각이 나간 뒤 끊기면 다시 시도하지 않고 ai_unavailable', async () => {

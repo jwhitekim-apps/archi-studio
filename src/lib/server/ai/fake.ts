@@ -4,7 +4,7 @@ import { AiError, type AiErrorCode, type AiProvider, type AiRequest } from './ty
 export interface FakeProviderOptions {
 	// complete가 차례로 돌려줄 응답. 다 쓰면 마지막 값을 계속 돌려준다.
 	responses?: string[];
-	// stream이 내보낼 조각
+	// stream이 내보낼 조각. 빈 조각만 있거나 없으면 실제 제공자처럼 ai_empty_response를 던진다.
 	chunks?: string[];
 	// 지정하면 complete와 stream이 이 오류를 던진다
 	error?: AiErrorCode | AiError;
@@ -36,10 +36,14 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
 		async *stream(request) {
 			calls.push({ method: 'stream', request });
 			fail();
+			let emitted = false;
 			for (const chunk of options.chunks ?? []) {
 				if (request.signal?.aborted) return;
-				if (chunk) yield chunk;
+				if (!chunk) continue;
+				emitted = true;
+				yield chunk;
 			}
+			if (!emitted) throw new AiError('ai_empty_response', '가짜 제공자 응답이 비어 있습니다.');
 		}
 	};
 }

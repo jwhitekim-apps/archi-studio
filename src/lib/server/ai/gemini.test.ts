@@ -79,6 +79,20 @@ describe('GeminiProvider.stream', () => {
 		expect(calls[0].model).toBe('gemini-smart-test');
 	});
 
+	it('빈 조각만 오면 ai_empty_response이고 종료 이유가 로그에 남는다', async () => {
+		const deps = testDeps();
+		const { client } = fakeClient({
+			stream: () =>
+				(async function* () {
+					yield { text: '' };
+					yield { text: undefined, candidates: [{ finishReason: 'MAX_TOKENS' }] };
+				})()
+		});
+		const err = await collect(new GeminiProvider(client, MODELS, deps).stream({ user: 'q', maxTokens: 10 })).catch((e) => e);
+		expect(err.code).toBe('ai_empty_response');
+		expect(deps.logs[0]).toMatchObject({ ok: false, code: 'ai_empty_response', finishReason: 'MAX_TOKENS' });
+	});
+
 	it('취소 신호를 SDK에 넘기고, 취소하면 더 내보내지 않고 스트림을 닫는다', async () => {
 		let closed = false;
 		const controller = new AbortController();

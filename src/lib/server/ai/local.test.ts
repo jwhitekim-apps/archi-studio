@@ -68,6 +68,16 @@ describe('LocalProvider', () => {
 		expect(JSON.parse(calls[0].init.body as string).stream).toBe(true);
 	});
 
+	it('생각만 하다 한도에 걸려 글자 없이 끝나면 ai_empty_response', async () => {
+		const thinking = `data: ${JSON.stringify({ choices: [{ delta: { content: '', reasoning: '생각 중' } }] })}\n\n`;
+		const cutoff = `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'length' }] })}\n\n`;
+		const { fn } = fakeFetch(() => sse([thinking, cutoff, 'data: [DONE]\n\n']));
+		const deps = testDeps();
+		const err = await collect(new LocalProvider({ baseUrl: BASE, apiKey: 'k', models: MODELS, fetch: fn }, deps).stream({ user: 'q', maxTokens: 16 })).catch((e) => e);
+		expect(err.code).toBe('ai_empty_response');
+		expect(deps.logs[0]).toMatchObject({ provider: 'local', ok: false, code: 'ai_empty_response', finishReason: 'length' });
+	});
+
 	it('\\r\\n 줄바꿈도 읽는다', async () => {
 		const { fn } = fakeFetch(() => sse([event('가').replace(/\n/g, '\r\n'), 'data: [DONE]\r\n\r\n']));
 		expect(await collect(new LocalProvider({ baseUrl: BASE, apiKey: 'k', models: MODELS, fetch: fn }, testDeps()).stream({ user: 'q', maxTokens: 1 }))).toEqual(['가']);

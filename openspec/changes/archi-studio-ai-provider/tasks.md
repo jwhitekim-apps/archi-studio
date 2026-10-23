@@ -22,6 +22,8 @@
 
 - [x] 4.1 호출마다 `{provider, tier, ms, ok, code}`만 남기는 로깅을 만들고(로거 주입), 성공과 실패 호출을 캡처해 로그에 프롬프트 문장, 응답 문장, API 키 값이 없음을 단위 테스트로 확인한다. 이어서 `grep -rnE "console\.(log|error)" src/lib/server/ai`가 로거 주입 부분 외에는 0건이다
 
+- [x] 4.2 `stream`이 글자를 하나도 내보내지 못하고 끝나면(취소 제외) `ai_empty_response`를 던지고 제공자의 종료 이유를 로그에 남기는지, 가짜 제공자도 조각이 없으면 같은 오류를 던지는지 단위 테스트로 확인한다(학교 모델 실제 호출에서 한도 1024일 때 8번 중 1번 꼴로 글자 없이 끝난 것을 보고 추가)
+
 ## 5. 로컬 제공자 (선택, 이 그룹은 건너뛰어도 나머지가 동작)
 
 - [x] 5.1 `local.ts`에 `LocalProvider`를 `fetch`로 만들고(`fetch` 주입), `LOCAL_LLM_BASE_URL`은 비서와 같은 값(`/v1`까지 포함), `LOCAL_LLM_API_KEY`, `LOCAL_LLM_MODEL`을 읽는다. 주소가 `http://`이면 요청 없이 `ai_not_configured`, 줄 단위 이벤트 스트림을 쪼개져 오는 경우까지 포함해 파싱하고 `[DONE]`에서 끝나는지, 인증서 검증을 끄는 코드가 없는지(`grep -rn "rejectUnauthorized" src` 0건) 단위 테스트와 검색으로 확인한다

@@ -1,7 +1,15 @@
 // 학교 서버의 로컬 모델(OpenAI 호환 chat/completions). SDK 없이 fetch로 부른다.
 // https만 쓰고 인증서 검증은 끄지 않는다. 자체 서명 인증서는 실행 환경의 NODE_EXTRA_CA_CERTS로 신뢰한다.
 import type { AiModels } from './config';
-import { BaseProvider, errorFromStatus, parseRetryAfter, type ProviderDeps, type RawCompletion, type ResolvedRequest } from './provider';
+import {
+	BaseProvider,
+	errorFromStatus,
+	parseRetryAfter,
+	type ProviderDeps,
+	type RawCompletion,
+	type ResolvedRequest,
+	type StreamMeta
+} from './provider';
 import { AiError } from './types';
 
 export interface LocalProviderOptions {
@@ -16,7 +24,7 @@ interface ChatCompletion {
 }
 
 interface ChatCompletionChunk {
-	choices?: { delta?: { content?: string | null } }[];
+	choices?: { delta?: { content?: string | null }; finish_reason?: string | null }[];
 }
 
 export class LocalProvider extends BaseProvider {
@@ -70,7 +78,7 @@ export class LocalProvider extends BaseProvider {
 	}
 
 	// 서버가 보내는 이벤트(SSE)를 줄 단위로 읽는다. 한 줄이 여러 덩어리로 쪼개져 와도 이어 붙인다.
-	protected async *streamOnce(req: ResolvedRequest): AsyncIterable<string> {
+	protected async *streamOnce(req: ResolvedRequest, meta: StreamMeta): AsyncIterable<string> {
 		const res = await this.post(req, true);
 		if (!res.body) throw new AiError('ai_unavailable', '로컬 모델 응답 본문이 없습니다.', { retryable: true });
 		const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -93,6 +101,8 @@ export class LocalProvider extends BaseProvider {
 					} catch {
 						throw new AiError('ai_unavailable', '로컬 모델 스트림을 읽지 못했습니다.');
 					}
+					const finishReason = chunk.choices?.[0]?.finish_reason;
+					if (finishReason) meta.finishReason = finishReason;
 					const text = chunk.choices?.[0]?.delta?.content;
 					if (text) yield text;
 				}

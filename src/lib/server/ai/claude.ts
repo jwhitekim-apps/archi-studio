@@ -1,7 +1,7 @@
 // Claude 제공자(@anthropic-ai/sdk). 재시도는 공용 계층이 하므로 SDK 자체 재시도는 끈다.
 import Anthropic from '@anthropic-ai/sdk';
 import type { AiModels } from './config';
-import { BaseProvider, type ProviderDeps, type RawCompletion, type ResolvedRequest } from './provider';
+import { BaseProvider, type ProviderDeps, type RawCompletion, type ResolvedRequest, type StreamMeta } from './provider';
 
 interface ClaudeParams {
 	model: string;
@@ -25,7 +25,7 @@ interface ClaudeMessage {
 
 interface ClaudeStreamEvent {
 	type: string;
-	delta?: { type?: string; text?: string };
+	delta?: { type?: string; text?: string; stop_reason?: string | null };
 }
 
 export function createClaudeClient(apiKey: string): ClaudeClient {
@@ -61,12 +61,13 @@ export class ClaudeProvider extends BaseProvider {
 		return { text, finishReason: message.stop_reason ?? undefined };
 	}
 
-	protected async *streamOnce(req: ResolvedRequest): AsyncIterable<string> {
+	protected async *streamOnce(req: ResolvedRequest, meta: StreamMeta): AsyncIterable<string> {
 		const events = (await this.client.messages.create(
 			{ ...this.params(req), stream: true },
 			{ signal: req.signal }
 		)) as AsyncIterable<ClaudeStreamEvent>;
 		for await (const event of events) {
+			if (event.type === 'message_delta' && event.delta?.stop_reason) meta.finishReason = event.delta.stop_reason;
 			if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
 				yield event.delta.text;
 			}

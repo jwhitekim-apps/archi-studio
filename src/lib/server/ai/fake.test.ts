@@ -22,6 +22,13 @@ describe('createFakeProvider', () => {
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 
+	it('조각이 없거나 빈 조각뿐이면 stream이 ai_empty_response를 던진다', async () => {
+		await expect(collect(createFakeProvider().stream({ user: 'q', maxTokens: 1 }))).rejects.toMatchObject({ code: 'ai_empty_response' });
+		await expect(collect(createFakeProvider({ chunks: [''] }).stream({ user: 'q', maxTokens: 1 }))).rejects.toMatchObject({
+			code: 'ai_empty_response'
+		});
+	});
+
 	it.each(['ai_rate_limited', 'ai_invalid_json'] as const)('오류 %s를 지정하면 같은 코드의 AiError를 던진다', async (code) => {
 		const fake = createFakeProvider({ error: code });
 		const err = await fake.complete({ user: 'q', maxTokens: 1 }).catch((e) => e);
