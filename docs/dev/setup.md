@@ -182,3 +182,19 @@ openssl rand -base64 32
 - `npm test`: 가짜 서버만으로 도는 단위 시험(암호화, 서명, 클라이언트, 변환 규칙).
 - `npm run test:auth`: 로컬 Supabase와 가짜 서버로 연결 → 동기화 → 해제 전체를 시험한다. Zotero 변수는 시험 코드가 직접 채우므로 `.env`에는 위 `SUPABASE_*` 4개만 있으면 된다.
 - 실제 Zotero 앱 키 등록과 실제 계정 연결 시험은 배포 단계에서 한다.
+
+## 논문 분석 시험 실행
+
+분석 기능(`src/lib/server/analysis/`)은 세 갈래로 시험한다. 외부 서비스(AI, Semantic Scholar, Zotero)는 모두 가짜를 쓴다.
+
+```bash
+npm test                 # 단위: PDF 읽기, 저널 점수(실제 SCImago CSV 포함), Semantic Scholar 클라이언트, 연결 규칙, 요약
+npm run db:start
+npm run test:analysis    # 통합: 분석 흐름과 /api/papers/{id}/analysis (실제 로컬 DB)
+```
+
+- 시험용 PDF는 `node scripts/make-analysis-fixture.mjs`가 `src/lib/server/analysis/fixtures/`에 만든다(외부 라이브러리 없이 손으로 쓴 PDF, 여러 번 실행해도 같은 바이트).
+- PDF 읽기 라이브러리 `pdfjs-dist`는 `5.6.205`로 고정했다. 5.7 이후는 Node 22.13 이상이 필요하다.
+- 저널 점수 데이터는 `data/analysis/`(`scimagojr 2025.csv` 약 11MB, `venue_aliases.json`)에 있고 서버가 실행 위치 기준으로 읽는다. **배포 이미지에 `data/analysis/`가 함께 들어가야 한다**(서버 번들에는 들어가지 않는다).
+- `S2_API_KEY`는 선택이다. 없으면 Semantic Scholar 요청마다 1초씩 쉬어 분석 한 번에 몇 초가 더 걸린다.
+- 벨루 분석 결과 가져오기(예비안)는 `docs/dev/analysis-fallback.md`를 본다.

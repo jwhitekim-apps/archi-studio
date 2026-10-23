@@ -89,6 +89,30 @@ export async function getPaperFile(deps: ZoteroDeps, userId: string, id: string)
 	return { kind: 'ok', response: new Response(html as BodyInit, { status: 200, headers: HTML_FILE_HEADERS }) };
 }
 
+// 분석용 PDF 바이트. PDF 첨부가 없거나 Zotero에 파일이 없으면 null이다. 크기 상한을 넘으면 본문을 읽지 않고 TooLargeError를 던진다.
+export class PaperPdfTooLargeError extends Error {
+	name = 'PaperPdfTooLargeError';
+}
+
+export async function fetchPaperPdf(deps: ZoteroDeps, userId: string, paper: PaperRow, maxBytes: number): Promise<Uint8Array | null> {
+	if (!paper.attachment_key || paper.attachment_type !== 'pdf') return null;
+	const api = await apiFor(deps, userId);
+	let upstream: Response;
+	try {
+		upstream = await fetchAttachmentFile(api, paper.attachment_key);
+	} catch (err) {
+		if (err instanceof ZoteroUnavailableError && err.status === 404) return null;
+		throw err;
+	}
+	if (Number(upstream.headers.get('content-length')) > maxBytes) {
+		await upstream.body?.cancel().catch(() => {});
+		throw new PaperPdfTooLargeError();
+	}
+	const bytes = new Uint8Array(await upstream.arrayBuffer());
+	if (bytes.byteLength > maxBytes) throw new PaperPdfTooLargeError();
+	return bytes;
+}
+
 export type AddWebpageResult =
 	| { kind: 'created'; detail: PaperDetail }
 	| { kind: 'invalid'; message: string };

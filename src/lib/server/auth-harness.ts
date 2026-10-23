@@ -18,6 +18,7 @@ import { POST as webpagePost } from '../../routes/api/papers/webpage/+server';
 import { DELETE as zoteroConnectionDelete } from '../../routes/api/zotero/connection/+server';
 import { POST as translatePost } from '../../routes/api/translate/+server';
 import { GET as translateHistoryGet } from '../../routes/api/translate/history/+server';
+import { GET as analysisGet, POST as analysisPost } from '../../routes/api/papers/[id]/analysis/+server';
 
 export interface CookieOptions {
 	path?: string;
@@ -65,7 +66,9 @@ const routes: Record<string, Handler> = {
 const paramRoutes: { method: string; pattern: RegExp; handler: Handler }[] = [
 	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)$/, handler: paperGet as unknown as Handler },
 	{ method: 'DELETE', pattern: /^\/api\/papers\/(?<id>[^/]+)$/, handler: paperDelete as unknown as Handler },
-	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)\/file$/, handler: paperFileGet as unknown as Handler }
+	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)\/file$/, handler: paperFileGet as unknown as Handler },
+	{ method: 'POST', pattern: /^\/api\/papers\/(?<id>[^/]+)\/analysis$/, handler: analysisPost as unknown as Handler },
+	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)\/analysis$/, handler: analysisGet as unknown as Handler }
 ];
 
 const handle = createApiHandle({ verify: verifySession });

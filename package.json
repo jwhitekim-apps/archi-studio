@@ -16,7 +16,8 @@
 		"db:reset": "supabase db reset",
 		"test": "vitest run",
 		"test:auth": "vitest run --config vitest.auth.config.ts",
-		"test:ai-live": "vitest run --config vitest.ai-live.config.ts"
+		"test:ai-live": "vitest run --config vitest.ai-live.config.ts",
+		"test:analysis": "vitest run --config vitest.analysis.config.ts"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.5.7",
@@ -35,6 +36,7 @@
 		"@anthropic-ai/sdk": "^1.1.0",
 		"@google/genai": "^2.31.0",
 		"@supabase/supabase-js": "^2.109.0",
-		"fflate": "^0.8.2"
+		"fflate": "^0.8.2",
+		"pdfjs-dist": "5.6.205"
 	}
 }

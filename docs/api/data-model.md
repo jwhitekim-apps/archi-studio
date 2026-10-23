@@ -157,7 +157,7 @@ PK `(user_id, key)`. `paperCount`는 저장하지 않고 `papers.collections`에
 | `id` | uuid | PK, default gen_random_uuid() | |
 | `user_id` | uuid | NN, FK `auth.users(id)` on delete cascade | |
 | `paper_id` | uuid | NN, FK `papers(id)` on delete cascade | 논문을 지우면 분석도 함께 지워진다 |
-| `result` | jsonb | NN | 요약과 저널 점수. 필드는 구현 전에 정한다(스펙이 요약 수준) |
+| `result` | jsonb | NN | `openapi.yaml`의 `Analysis`에서 `paperId`를 뺀 모양에 `origin`(`native` 또는 `veloo-import`, 벨루 결과를 가져온 행)을 더한 것. `origin`은 API 응답에 내보내지 않는다 |
 | `created_at` | timestamptz | NN, default now() | |
 
 제약: unique `(user_id, paper_id)`. 스펙: "같은 논문의 분석이 이미 있으면 새로 만들지 않는다".

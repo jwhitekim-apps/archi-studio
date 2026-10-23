@@ -21,3 +21,9 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# 벨루 사용자 → 새 계정 매핑(사용자 이름이 들어갈 수 있다)
+/data/veloo-user-map.json
+
+# 분석 예비안 등 DB 백업 파일(사용자 데이터)
+/backup
