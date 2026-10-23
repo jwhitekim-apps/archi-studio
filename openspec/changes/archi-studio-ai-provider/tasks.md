@@ -25,7 +25,7 @@
 ## 5. 로컬 제공자 (선택, 이 그룹은 건너뛰어도 나머지가 동작)
 
 - [x] 5.1 `local.ts`에 `LocalProvider`를 `fetch`로 만들고(`fetch` 주입), `LOCAL_LLM_BASE_URL`은 비서와 같은 값(`/v1`까지 포함), `LOCAL_LLM_API_KEY`, `LOCAL_LLM_MODEL`을 읽는다. 주소가 `http://`이면 요청 없이 `ai_not_configured`, 줄 단위 이벤트 스트림을 쪼개져 오는 경우까지 포함해 파싱하고 `[DONE]`에서 끝나는지, 인증서 검증을 끄는 코드가 없는지(`grep -rn "rejectUnauthorized" src` 0건) 단위 테스트와 검색으로 확인한다
-- [ ] 5.2 (집 서버에서 사용자가 실행) `AI_PROVIDER=local`로 `AI_LIVE_TEST=1 npm run test:ai-live`를 실행해 학교 모델에서 `complete`와 `stream`이 각각 한 번 성공하는지 확인한다. 실패하면 오류 코드와 단계(주소, 인증서, 인증, 응답)를 `docs/dev/ai-provider.md`의 "알려진 문제"에 적는다
+- [x] 5.2 (집 서버에서 사용자가 실행) `AI_PROVIDER=local`로 `AI_LIVE_TEST=1 npm run test:ai-live`를 실행해 학교 모델에서 `complete`와 `stream`이 각각 한 번 성공하는지 확인한다. 실패하면 오류 코드와 단계(주소, 인증서, 인증, 응답)를 `docs/dev/ai-provider.md`의 "알려진 문제"에 적는다
 
 ## 6. 문서와 마무리
 
