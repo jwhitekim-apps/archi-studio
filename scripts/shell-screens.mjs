@@ -1,9 +1,10 @@
 // 셸 레이아웃 확인용 스크린샷. 실행 중인 서버 주소와 저장 폴더를 받는다.
-// 사용: node scripts/shell-screens.mjs http://127.0.0.1:4173 <저장 폴더>
+// 사용: node scripts/shell-screens.mjs http://127.0.0.1:5273/dev/components <저장 폴더>
+// 셸이 있으면서 로그인 없이 열리는 화면은 개발 서버의 /dev/components뿐이다.
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
 
-const [url = 'http://127.0.0.1:4173', outDir = '.'] = process.argv.slice(2);
+const [url = 'http://127.0.0.1:5273/dev/components', outDir = '.'] = process.argv.slice(2);
 mkdirSync(outDir, { recursive: true });
 
 const browser = await chromium.launch();

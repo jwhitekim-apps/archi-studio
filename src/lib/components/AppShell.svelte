@@ -1,11 +1,27 @@
 <script lang="ts">
 	import { tick, type Snippet } from 'svelte';
+	import { Icon, NavItem } from '$lib/components/ui';
+	import { isActive, type NavEntry } from '$lib/nav';
 
 	let {
 		hasPanel = true,
+		nav = [],
+		pathname = '',
+		email,
+		onlogout,
+		panel,
 		children
 	}: {
 		hasPanel?: boolean;
+		// 메뉴 항목(label, href, disabled). 화면이 없는 항목은 비활성으로 그린다
+		nav?: NavEntry[];
+		// 현재 위치 표시(aria-current)를 정할 경로
+		pathname?: string;
+		// 아래쪽에 보여줄 사용자 이메일. 없으면 사용자 영역을 그리지 않는다
+		email?: string;
+		onlogout?: () => void;
+		// 오른쪽 설정 패널 내용. 없으면 빈 상태 문구
+		panel?: Snippet;
 		children: Snippet;
 	} = $props();
 
@@ -18,8 +34,6 @@
 	let menuEl: HTMLElement | undefined = $state();
 	let panelEl: HTMLElement | undefined = $state();
 	let opener: HTMLElement | undefined;
-
-	const menuItems = ['서재', '번역', '분석', '메모', '브리핑'];
 
 	// 좁은 화면에서만 메뉴와 패널이 겹침(오버레이)으로 열린다.
 	const overlayOpen = $derived(narrow && (menuOpen || panelOpen));
@@ -116,10 +130,29 @@
 		<button type="button" class="overlay-close" onclick={close}>닫기</button>
 		<div class="menu-title wordmark">Archi Studio</div>
 		<ul>
-			{#each menuItems as item (item)}
-				<li><span class="menu-item">{item}</span></li>
+			{#each nav as item (item.label)}
+				<li class="menu-item">
+					<NavItem
+						label={item.label}
+						href={item.href}
+						icon={item.icon}
+						disabled={item.disabled}
+						active={isActive(item.href, pathname)}
+						onclick={close}
+					/>
+				</li>
 			{/each}
 		</ul>
+		{#if email}
+			<div class="account">
+				<NavItem label="설정" href="/settings" icon="settings" active={isActive('/settings', pathname)} onclick={close} />
+				<p class="email" title={email}>{email}</p>
+				<button type="button" class="logout" onclick={onlogout}>
+					<Icon name="logout" size={16} />
+					로그아웃
+				</button>
+			</div>
+		{/if}
 	</nav>
 
 	<main class="work" inert={overlayOpen}>
@@ -137,7 +170,11 @@
 		>
 			<button type="button" class="overlay-close" onclick={close}>닫기</button>
 			<h2 class="panel-title">설정</h2>
-			<p class="empty">선택한 도구의 설정이 여기에 표시됩니다.</p>
+			{#if panel}
+				{@render panel()}
+			{:else}
+				<p class="empty">선택한 도구의 설정이 여기에 표시됩니다.</p>
+			{/if}
 		</aside>
 	{/if}
 
@@ -188,14 +225,55 @@
 		gap: var(--space-xs);
 	}
 
-	.menu-item {
+	.menu {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.account {
+		display: grid;
+		gap: var(--space-xs);
+		margin-top: auto;
+		padding-top: var(--space-lg);
+		border-top: 1px solid var(--color-border);
+	}
+
+	.email {
+		margin: 0;
+		padding: 0 var(--space-md);
+		overflow: hidden;
+		color: var(--color-text-muted);
+		font-size: var(--fs-13);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.logout {
 		display: flex;
 		align-items: center;
+		gap: var(--space-sm);
 		min-height: var(--control-h);
 		padding: 0 var(--space-md);
+		border: 0;
 		border-radius: var(--radius-sm);
+		background: transparent;
 		color: var(--color-text-muted);
+		font: inherit;
 		font-size: var(--fs-14);
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.logout:hover {
+		background: var(--color-hover);
+		color: var(--color-text);
+	}
+
+	.logout:focus-visible,
+	.icon-button:focus-visible,
+	.overlay-close:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: -2px;
 	}
 
 	.work {

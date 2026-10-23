@@ -100,28 +100,68 @@ ldd ~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux
 `LD_LIBRARY_PATH`는 터미널을 새로 열 때마다 다시 지정한다.
 Chromium을 `LD_LIBRARY_PATH` 없이 시작하면 `error while loading shared libraries: libatk-1.0.so.0` 처럼 종료한다.
 
-### 4. 실행
+### 4. 글꼴 설정 (없을 때만)
 
-서버를 하나 띄우고 그 주소를 인자로 준다. 포트 4173은 빌드한 미리보기, 5273은 개발 서버 예시다.
+서버에 `/etc/fonts`가 없으면 Chromium이 글자를 그리다 `SkFontMgr_FontConfigInterface … Not implemented`로 바로 종료한다
+(Playwright 오류는 `Target page, context or browser has been closed`). 한글 글꼴 패키지를 같은 임시 폴더에 풀고 설정 파일로만 알려 준다.
+
+```bash
+LIBS=$HOME/.cache/archi-chromelibs
+mkdir -p "$LIBS/fontdebs" "$LIBS/fontcache"
+(cd "$LIBS/fontdebs" && apt-get download fonts-nanum)
+for f in "$LIBS"/fontdebs/*.deb; do dpkg-deb -x "$f" "$LIBS/root"; done
+printf '<?xml version="1.0"?>\n<fontconfig>\n  <dir>%s</dir>\n  <cachedir>%s</cachedir>\n</fontconfig>\n' \
+  "$LIBS/root/usr/share/fonts" "$LIBS/fontcache" > "$LIBS/fonts.conf"
+export FONTCONFIG_FILE="$LIBS/fonts.conf"
+```
+
+`FONTCONFIG_FILE`도 `LD_LIBRARY_PATH`처럼 터미널마다 다시 지정한다. 이렇게 하면 스크린샷에 한글이 보인다.
+
+### 5. 실행
+
+셸이 있으면서 로그인 없이 열리는 화면은 개발 서버의 `/dev/components`뿐이다(빌드한 서버에서는 404).
 다른 서비스가 쓰는 포트(위 포트 표)와 겹치지 않게 고른다.
 
 ```bash
-# 방법 A: 빌드한 미리보기 (기본 주소 http://127.0.0.1:4173)
-npm run build
-npm run preview -- --port 4173 --host 127.0.0.1 &
-node scripts/shell-screens.mjs http://127.0.0.1:4173 "$(mktemp -d)"
-kill %1
-
-# 방법 B: 개발 서버
 npm run dev -- --port 5273 --host 127.0.0.1 &
-curl -s -o /dev/null http://127.0.0.1:5273/; sleep 5      # 첫 접속에 Vite가 의존성을 다시 최적화하며 페이지를 새로고침하므로 먼저 한 번 열어 둔다
-node scripts/shell-screens.mjs http://127.0.0.1:5273 "$(mktemp -d)"
+curl -s -o /dev/null http://127.0.0.1:5273/dev/components; sleep 5      # 첫 접속에 Vite가 의존성을 다시 최적화하며 페이지를 새로고침하므로 먼저 한 번 열어 둔다
+node scripts/shell-screens.mjs http://127.0.0.1:5273/dev/components "$(mktemp -d)"
 kill %1
 ```
 
 - 출력의 `OK`/`FAIL` 줄이 검사 결과다. 스크린샷은 두 번째 인자로 준 폴더에 `light|dark-1280.png`, `-390.png`, `-390-menu.png`, `-390-panel.png`로 저장된다.
-- 서버에 한글 글꼴이 없으면 스크린샷에 글자가 보이지 않는다. 영역, 색, 겹침은 확인되고 글자는 DOM 검사로 대신한다.
 - 끝나면 띄운 서버를 반드시 종료한다(`kill %1`).
+
+## 화면 검사 (scripts/ui-screens.mjs)
+
+공통 부품, 로그인·가입, 서재, 설정 화면을 Playwright로 검사하고 스크린샷을 남긴다. 위 "화면 셸 검증"의 1~4단계(Node, Chromium,
+라이브러리, 글꼴)를 먼저 마친다. 검사가 하나라도 실패하면 종료 코드가 1이다.
+
+| 검사 묶음 | 내용 | 로컬 DB |
+|---|---|---|
+| `components` | `/dev/components`의 부품: 진행 중 버튼 중복 실행, 포커스 윤곽, 대화상자, 스트리밍, 글자 대비 | 필요 없음 |
+| `signup` | 가입·로그인 화면의 입력 검사와 오류 안내(가짜 응답) | 필요 없음 |
+| `auth` | 가입 → 승인 → 로그인 → 로그아웃, 오류 문구, 시도 제한(실제 인증 API) | 필요 |
+| `library` | 서재 목록·검색·컬렉션·동기화·웹페이지 추가·삭제(가짜 응답, 로그인은 실제) | 필요 |
+| `settings` | 설정 화면의 Zotero 연결 상태와 해제, 거부 안내(가짜 응답) | 필요 |
+| `layout` | 7개 화면 × 라이트·다크 × 1280·767·390px의 가로 넘침과 세 영역 | 필요 |
+| `library-real` | SQL로 넣은 논문 55건으로 실제 서버의 목록·검색·컬렉션·더 보기 | 필요 |
+
+```bash
+export LD_LIBRARY_PATH="$HOME/.cache/archi-chromelibs/root/usr/lib/x86_64-linux-gnu"
+export FONTCONFIG_FILE="$HOME/.cache/archi-chromelibs/fonts.conf"
+npm run db:start
+npm run dev -- --port 5273 --host 127.0.0.1 &
+curl -s -o /dev/null http://127.0.0.1:5273/dev/components; sleep 5
+node scripts/ui-screens.mjs http://127.0.0.1:5273 "$(mktemp -d)"                     # 모든 묶음
+node scripts/ui-screens.mjs http://127.0.0.1:5273 "$(mktemp -d)" components,signup   # DB 없이 도는 묶음만
+kill %1
+npm run db:stop
+```
+
+- 검사는 `ui-check-…@example.com` 계정을 만들어 쓰고 끝나면 지운다. 로그인 실패 기록(`archi_login_attempts`)도 127.0.0.1 것만 지운다.
+- `auth` 묶음은 같은 IP의 로그인 시도 제한(15분에 5번)을 일부러 넘긴다. 검사가 중간에 멈추면 다음 실행 전에 `delete from public.archi_login_attempts`를 직접 실행한다.
+- 스크린샷은 두 번째 인자 폴더에 `light|dark-<화면>-<폭>.png`, `library-list.png`, `settings-confirm.png` 등으로 저장된다.
 
 ## 인증 테스트 실행
 
