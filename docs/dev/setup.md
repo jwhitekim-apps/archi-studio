@@ -241,3 +241,17 @@ npm run test:analysis    # 통합: 분석 흐름과 /api/papers/{id}/analysis (�
 - 저널 점수 데이터는 `data/analysis/`(`scimagojr 2025.csv` 약 11MB, `venue_aliases.json`)에 있고 서버가 실행 위치 기준으로 읽는다. **배포 이미지에 `data/analysis/`가 함께 들어가야 한다**(서버 번들에는 들어가지 않는다).
 - `S2_API_KEY`는 선택이다. 없으면 Semantic Scholar 요청마다 1초씩 쉬어 분석 한 번에 몇 초가 더 걸린다.
 - 벨루 분석 결과 가져오기(예비안)는 `docs/dev/analysis-fallback.md`를 본다.
+
+## 메모 시험 실행
+
+메모 API(`GET/PUT /api/papers/{id}/memo`, 코드는 `src/lib/server/memo/`)는 메모를 Zotero 자식 노트(태그 `zotero-insight:memo`)로 읽고 쓴다. 시험은 실제 Zotero에 접속하지 않는다.
+
+```bash
+npm test                 # 단위: 마크다운↔HTML 왕복, 폴리오 노트 읽기, 메모리 가짜 노트(412 흉내), 저장·삭제·재시도
+npm run db:start
+npm run test:auth        # 통합: memo.integration.ts (가짜 Zotero 서버 + 로컬 DB, has_memo 갱신과 1 MB 제한 포함)
+```
+
+- **배포 설정**: Node 어댑터의 본문 한도 기본값(512 KB)은 1 MB 메모보다 작다. 서버를 `BODY_SIZE_LIMIT=4M`으로 띄운다(메모 요청 본문 상한 4 MiB 이상이어야 한다). 메모 저장(`PUT /api/papers/{id}/memo`) 밖의 `/api` 경로는 가드(`api-guard.ts`의 `limitBody`)가 그대로 512 KB로 막는다. 한도를 올리지 않으면 512 KB를 넘는 메모가 413 `payload_too_large`로 거부된다.
+- 손으로 확인(빌드 산출물): `npm run build` 뒤 `PORT=<빈 포트> ORIGIN=http://localhost:<포트> BODY_SIZE_LIMIT=4M node --env-file=.env build`로 띄우고, 로그인 쿠키로 1,048,577바이트 메모를 `curl -X PUT`하면 JSON 413, 600 KB 본문의 `POST /api/auth/login`은 한도를 올리기 전과 같은 400 `invalid_request`다(2026-10-24 확인).
+- **실제 Zotero 계정 확인(사용자가 직접)**: 실제 Zotero를 연결한 계정으로 논문 허브에서 메모를 저장한 뒤 Zotero 앱(또는 zotero.org 웹 서재)에서 그 논문 아래에 태그 `zotero-insight:memo`가 붙은 자식 노트가 하나만 생겼는지, 같은 메모를 여러 번 저장해도 하나인지, 빈 메모를 저장하면 노트가 휴지통으로 가는지 본다. 폴리오가 만든 기존 메모 노트가 있는 논문은 그 본문이 그대로 읽히는지도 본다.

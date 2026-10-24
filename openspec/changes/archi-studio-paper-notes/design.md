@@ -15,7 +15,7 @@
 ## Goals / Non-Goals
 
 **Goals:**
-- 메인 스펙 `paper-notes`의 요구사항 4개와 시나리오 6개를 그대로 만족한다.
+- 메인 스펙 `paper-notes`의 요구사항 4개와 시나리오 7개를 그대로 만족한다.
 - 폴리오가 이미 만든 메모 노트(같은 태그)를 새 앱이 그대로 읽고 이어서 저장한다.
 - Zotero 없이도 검증할 수 있게 Zotero 호출을 바꿔 끼울 수 있는 경계(가짜 구현 주입)를 둔다.
 
@@ -30,14 +30,18 @@
 **1. 메모 서비스는 Zotero 호출을 인터페이스로 받는다.**
 `findMemoNote(itemKey)`, `createMemoNote(itemKey, html)`, `updateNote(noteKey, version, html)`, `deleteNote(noteKey, version)`만 가진 작은 인터페이스를 메모 서비스가 받는다. 실제 구현은 선행 change의 Zotero 호출 모듈이 맡고, 테스트는 메모리에 노트를 들고 있는 가짜 구현을 쓴다. 이렇게 하면 Zotero 계정 없이 멱등 저장과 삭제를 검증할 수 있다. 대안(서비스가 직접 `fetch`)은 시험할 때마다 외부 호출을 흉내 내야 해서 버렸다.
 
+구현 결과(2026-10-24): 소유 확인은 `papers-service.ts`의 `findOwnPaper(admin, userId, id)`(남의 논문·없는 논문·UUID 아님은 모두 `null`), Zotero 자격 정보는 `zotero/connection.ts`의 `getCredentials`를 감싼 `papers-zotero.ts`의 `apiFor(deps, userId)`(미연결이면 `ZoteroNotConnected`)를 쓴다. 인터페이스와 실제 구현은 `memo/notes.ts`(`MemoNotes`, `zoteroMemoNotes`), Zotero 호출은 `zotero/client.ts`의 `createChildNote`, `patchNote`, `deleteItem`, 메모리 가짜는 `memo/memory-notes.ts`, 라우트 쪽 순서는 `memo/memo-zotero.ts`에 있다. 통합 시험은 가짜 Zotero 서버(`fake-zotero.ts`)에 노트 생성·수정·삭제와 412 흉내를 더해 쓴다.
+
 **2. 변환은 폴리오와 같은 라이브러리와 같은 옵션을 쓴다.**
-`marked`(마크다운→HTML)와 `turndown`(HTML→마크다운, 제목 `atx`, 코드 `fenced`, 목록 `-`). 이미 폴리오가 만든 노트와 왕복 결과가 같아야 하기 때문이다. 본문 앞뒤 공백은 `trim`한다.
+`marked`(마크다운→HTML)와 `turndown`(HTML→마크다운, 제목 `atx`, 코드 `fenced`, 목록 `-`). 이미 폴리오가 만든 노트와 왕복 결과가 같아야 하기 때문이다. 본문 앞뒤 공백은 `trim`한다. 구현에서 두 가지를 폴리오와 다르게 했다(읽기 결과만 달라지고 폴리오 노트는 그대로 읽힌다): 목록 기호 뒤 공백을 turndown 기본 3칸(`-   항목`)에서 1칸(`- 항목`)으로, 기울임 기호를 `_`에서 `*`로 바꿨다. `_보행성_을`처럼 한글이 바로 붙으면 CommonMark가 기울임으로 읽지 않기 때문이다.
 
 **3. "같은 본문"의 의미를 정한다.**
 저장한 마크다운을 다시 조회했을 때 문자 하나까지 같다고 보장하지 않는다. HTML을 거치므로 표현이 약간 달라질 수 있다(예: 줄 끝 공백, 목록 기호). 계약의 "이후 조회가 같은 본문을 돌려준다"는 시험용 대표 본문(제목, 목록, 코드 블록, 링크, 한글, 빈 줄)을 저장하고 조회했을 때 앞뒤 공백 제거 후 일치한다는 뜻으로 검증한다. 일치하지 않는 문법이 있으면 목록으로 문서화한다.
 
 **4. 크기 제한은 바이트로 센다.**
 본문 길이를 UTF-8 바이트로 재서 1 MB(1,048,576바이트)를 넘으면 413 `payload_too_large`다. 글자 수로 세면 한글이 많을 때 제한이 달라진다. 요청 본문을 읽기 전에 거부할 수 있도록, Node 서버 어댑터의 본문 한도(`BODY_SIZE_LIMIT`, 기본 512 KB)를 메모 경로에서는 1 MB보다 크게 올려야 한다. 한도를 올리지 않으면 어댑터가 코드에 도달하기 전에 형식이 다른 413을 먼저 돌려준다.
+
+구현 결과: 어댑터 한도는 프로세스 전체(`BODY_SIZE_LIMIT` 환경 변수)라 경로별로 바꿀 수 없다. 그래서 서버를 `BODY_SIZE_LIMIT=4M`으로 띄우고(요청 본문 상한 4 MiB, JSON 이스케이프 여유), 메모 저장 밖의 `/api` 경로는 가드(`api-guard.ts`의 `limitBody`)가 512 KB를 넘는 본문 읽기를 실패시켜 이전과 같은 응답이 나게 했다. 한도를 올리지 않은 서버에서도 본문 읽기 실패는 JSON 413 `payload_too_large`로 답한다. 설정 방법은 `docs/dev/setup.md`의 메모 시험 절.
 
 **5. 저장 순서와 `has_memo` 갱신.**
 저장: 본문 검사(문자열인가, 크기) → 논문 소유 확인 → Zotero 연결 확인 → 기존 노트 찾기 → 빈 본문이면 삭제, 아니면 수정 또는 생성 → `papers.has_memo` 갱신 → `{ markdown, updatedAt }` 응답. Zotero 쓰기가 성공한 뒤에만 `has_memo`를 바꾼다. 쓰기가 실패하면 `has_memo`는 그대로다.
@@ -65,6 +69,6 @@ Zotero 노트의 `dateModified`를 그대로 쓴다. 삭제된 상태(노트 없
 
 ## Open Questions
 
-1. **Zotero가 응답하지 않거나 5xx일 때의 응답.** 지금 스펙에는 코드가 없다. 추천: 이번에는 500 `internal_error`로 두고, Zotero를 쓰는 다른 change(논문 동기화 등)와 함께 `zotero_unavailable`(502) 같은 코드를 스펙에 추가할지 한 번에 정한다.
-2. **왕복에서 달라지는 문법을 고칠지.** 추천: 대표 본문 시험에서 실제로 달라지는 것이 나오면 그때 목록으로 문서화하고, 데모 흐름(제목, 목록, 코드, 링크)에서 문제가 없으면 그대로 둔다.
+1. **Zotero가 응답하지 않거나 5xx일 때의 응답.** (해결) `archi-studio-papers`가 `zotero_unavailable`(502)을 이미 만들어 메모도 같은 처리(`withZoteroErrors`)를 쓴다. 버전 충돌 재시도가 두 번째에도 실패하면 이것도 502다.
+2. **왕복에서 달라지는 문법을 고칠지.** 대표 본문 6종(제목, 목록·번호 목록, 코드 블록, 링크, 한글 굵게·기울임, 빈 줄)은 결정 2의 두 가지 조정 뒤 모두 같다. 남은 차이로 알려진 것: 중첩 목록 들여쓰기는 2칸으로 바뀐다(4칸으로 쓰면 2칸으로 돌아온다), `*`·`_`·`#` 같은 문자를 글자 그대로 쓴 곳에는 `\\` 이스케이프가 붙을 수 있다, 줄 끝 공백 두 칸 줄바꿈은 확인하지 않았다.
 3. **Zotero 호출 모듈의 위치.** 선행 `archi-studio-papers`가 정하는 구조에 맞춰 노트 호출 함수를 같은 모듈에 둔다. 모듈 구조가 정해지기 전에는 이 change의 파일 경로가 바뀔 수 있다.

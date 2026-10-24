@@ -30,6 +30,8 @@ export interface FakeZotero {
 	failChildrenFor: Set<string>;
 	calls: string[]; // "METHOD path" 기록
 	files: Map<string, { body: Buffer; contentType: string }>; // 첨부 key -> 파일
+	failWriteStatus: number | null; // 값이 있으면 쓰기(POST, PATCH, DELETE)만 이 상태로 실패
+	noteConflicts: number; // 이 횟수만큼 노트 수정·삭제에 412를 돌려준다(그때마다 노트 버전이 오른다)
 	deleteConflicts: number; // 이 횟수만큼 삭제 요청에 412를 돌려준다(그때마다 항목 버전이 오른다)
 	setFile(attachmentKey: string, body: Buffer, contentType: string): void;
 	acceptUser(zoteroUserId: string): void; // 이 번호의 /users/<번호>/ 경로도 같은 라이브러리로 받는다
@@ -58,6 +60,8 @@ export async function startFakeZotero(opts: FakeZoteroOptions = {}): Promise<Fak
 		calls: [] as string[],
 		files: new Map<string, { body: Buffer; contentType: string }>(),
 		deleteConflicts: 0,
+		failWriteStatus: null as number | null,
+		noteConflicts: 0,
 		extraUserIds: new Set<string>()
 	};
 	const tokens = new Map<string, string>(); // request token -> secret
@@ -135,12 +139,42 @@ export async function startFakeZotero(opts: FakeZoteroOptions = {}): Promise<Fak
 			return;
 		}
 		const rest = m[2];
+		if (state.failWriteStatus && req.method !== 'GET') {
+			res.writeHead(state.failWriteStatus).end('upstream write failure');
+			return;
+		}
+		const findChild = (key: string) => [...state.children.values()].flat().find((c) => c.key === key);
+		const childMatch = /^items\/([^/]+)$/.exec(rest);
+		const child = childMatch ? findChild(childMatch[1]) : undefined;
+		if (child && (req.method === 'PATCH' || req.method === 'DELETE')) {
+			if (state.noteConflicts > 0) {
+				state.noteConflicts--;
+				child.version = bump();
+				res.writeHead(412).end();
+				return;
+			}
+			if (req.headers['if-unmodified-since-version'] !== String(child.version)) {
+				res.writeHead(412).end();
+				return;
+			}
+			if (req.method === 'PATCH') {
+				Object.assign(child.data, JSON.parse(body.toString('utf8')) as Record<string, unknown>);
+				child.version = bump();
+				child.data.dateModified = new Date(Date.UTC(2026, 0, 1, 0, 0, child.version)).toISOString().replace('.000', '');
+			} else {
+				const parent = String(child.data.parentItem);
+				state.children.set(parent, (state.children.get(parent) ?? []).filter((c) => c !== child));
+				state.deleted.push({ key: child.key, version: bump() });
+			}
+			res.writeHead(204, { 'Last-Modified-Version': String(state.version) }).end();
+			return;
+		}
 
 		if (req.method === 'POST' && rest === 'items') {
 			const list = JSON.parse(body.toString('utf8')) as Record<string, unknown>[];
 			const successful: Record<string, FakeItem> = {};
 			list.forEach((data, i) => {
-				successful[String(i)] = fake.addItem(data);
+				successful[String(i)] = typeof data.parentItem === 'string' ? fake.addChild(data.parentItem, data) : fake.addItem(data);
 			});
 			return json(res, { successful, failed: {} });
 		}
@@ -206,7 +240,7 @@ export async function startFakeZotero(opts: FakeZoteroOptions = {}): Promise<Fak
 		}
 		mm = /^items\/([^/]+)$/.exec(rest);
 		if (mm) {
-			const item = state.items.find((i) => i.key === mm![1]);
+			const item = state.items.find((i) => i.key === mm![1]) ?? findChild(mm[1]);
 			if (!item) {
 				res.writeHead(404).end();
 				return;
@@ -248,6 +282,10 @@ export async function startFakeZotero(opts: FakeZoteroOptions = {}): Promise<Fak
 		failChildrenFor: state.failChildrenFor,
 		calls: state.calls,
 		files: state.files,
+		get failWriteStatus() { return state.failWriteStatus; },
+		set failWriteStatus(v) { state.failWriteStatus = v; },
+		get noteConflicts() { return state.noteConflicts; },
+		set noteConflicts(v) { state.noteConflicts = v; },
 		get deleteConflicts() { return state.deleteConflicts; },
 		set deleteConflicts(v) { state.deleteConflicts = v; },
 		acceptUser(zoteroUserId) {
@@ -278,6 +316,7 @@ export async function startFakeZotero(opts: FakeZoteroOptions = {}): Promise<Fak
 		addChild(parentKey, data) {
 			const child: FakeItem = { key: nextKey(), version: bump(), data: { parentItem: parentKey, ...data } };
 			(child.data as Record<string, unknown>).key = child.key;
+			child.data.dateModified ??= new Date(Date.UTC(2026, 0, 1, 0, 0, child.version)).toISOString().replace('.000', '');
 			state.children.set(parentKey, [...(state.children.get(parentKey) ?? []), child]);
 			return child;
 		},
