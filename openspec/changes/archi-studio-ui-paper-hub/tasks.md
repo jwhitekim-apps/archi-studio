@@ -4,9 +4,9 @@
 
 ## 1. 원문 뷰어
 
-- [ ] 1.1 `pdfjs-dist`는 서버 추출이 이미 쓰는 `5.6.205`를 그대로 쓰고(6은 Node 22.13 이상이 필요해 현재 Node 20에서 쓸 수 없다) `marked@^18`은 이미 추가되어 있으며, `safari-polyfills.ts`, `pdf-worker-entry.ts`를 옮기며 `vite.config.ts`에 `worker.format = 'es'`를 넣은 뒤, `npm run check`가 오류 0건이고 `npm run build`가 서버 렌더링 중 `window`·`document` 오류 없이 끝나며 `grep -rl "pdf.worker" build/client | wc -l`이 1 이상인지 확인한다(Node 20). 실패하면 원인을 기록하고 이 change를 멈춘다
-- [ ] 1.2 `PdfViewer.svelte`의 핵심(불러오기, 렌더링, 폭 맞춤, 글자 위치 교정, 링크 이동과 뒤로, 복사)을 TypeScript로 옮기고 `pdfjs-dist`는 화면에 붙은 뒤 동적으로 불러오게 한다. `grep -nEi "highlight|ink|eraser" src/lib/components/PdfViewer.svelte | wc -l`이 0이고 `npm run check`가 오류 0건이며, 이식 뒤 줄 수와 `: any` 개수를 `wc -l`, `grep -c`로 세어 기록한다
-- [ ] 1.3 `PdfPane.svelte`(확대 툴바, Ctrl/Cmd+휠 확대, 확대 지점 고정 스크롤 보정), `HtmlViewer.svelte`(`sandbox="allow-same-origin"`), `touch-gestures.ts`를 옮긴다. 배율 상태는 `PdfPane`만 갖고 뷰어는 받아 쓰는지 코드로 확인하고, `grep -nE "penMode|eraser|replaceAttachment" src/lib/components/*.svelte | wc -l`이 0이며 `npm run check`가 오류 0건이다
+- [x] 1.1 `pdfjs-dist`는 서버 추출이 이미 쓰는 `5.6.205`를 그대로 쓰고(6은 Node 22.13 이상이 필요해 현재 Node 20에서 쓸 수 없다) `marked@^18`은 이미 추가되어 있으며, `safari-polyfills.ts`, `pdf-worker-entry.ts`를 옮기며 `vite.config.ts`에 `worker.format = 'es'`를 넣은 뒤, `npm run check`가 오류 0건이고 `npm run build`가 서버 렌더링 중 `window`·`document` 오류 없이 끝나며 `grep -rl "pdf.worker" build/client | wc -l`이 1 이상인지 확인한다(Node 20). 실패하면 원인을 기록하고 이 change를 멈춘다
+- [x] 1.2 `PdfViewer.svelte`의 핵심(불러오기, 렌더링, 폭 맞춤, 글자 위치 교정, 링크 이동과 뒤로, 복사)을 TypeScript로 옮기고 `pdfjs-dist`는 화면에 붙은 뒤 동적으로 불러오게 한다. `grep -nEi "highlight|ink|eraser" src/lib/components/PdfViewer.svelte | wc -l`이 0이고 `npm run check`가 오류 0건이며, 이식 뒤 줄 수와 `: any` 개수를 `wc -l`, `grep -c`로 세어 기록한다
+- [x] 1.3 `PdfPane.svelte`(확대 툴바, Ctrl/Cmd+휠 확대, 확대 지점 고정 스크롤 보정), `HtmlViewer.svelte`(`sandbox="allow-same-origin"`), `touch-gestures.ts`를 옮긴다. 배율 상태는 `PdfPane`만 갖고 뷰어는 받아 쓰는지 코드로 확인하고, `grep -nE "penMode|eraser|replaceAttachment" src/lib/components/*.svelte | wc -l`이 0이며 `npm run check`가 오류 0건이다
 - [ ] 1.4 `src/routes/(app)/papers/[id]/+page.svelte`에 원문 패널만 그리는 최소 화면을 만든다(상세 조회로 `attachment.type`을 읽어 PDF 또는 HTML 뷰어를 고른다). `npm run build`가 통과하고 `GET /papers/anything`의 서버 렌더링 응답이 200이다
 - [ ] 1.5 `scripts/ui-screens.mjs`에 허브 검사 묶음(`hub-viewer`)을 더하고(기존 `loggedInContext`, `mockApi` 재사용) 검사한다. 검사: 3쪽 PDF(시험 시작 때 `page.pdf()`로 생성)가 첫 쪽부터 그려짐, 폭 맞춤에서 가로 스크롤 0, 확대 버튼으로 배율 증가, 확대 전후 기준 글자의 화면 세로 위치 변화 2px 이하, 글자 드래그 뒤 복사한 문자열이 원문과 일치, HTML 첨부가 `sandbox` 속성이 있는 프레임으로 열리고 그 안의 `<script>`가 실행되지 않음, 첨부 없음 안내. 모두 통과하고 종료 코드가 0이다
 
