@@ -3,7 +3,8 @@
 // 검사 묶음: components(공통 부품), signup(가입 화면, 가짜 응답), auth(로그인 흐름, 실제 인증 API),
 // library(서재, 가짜 응답), settings(설정, 가짜 응답), layout(화면 크기·테마별 배치),
 // library-real(로컬 DB에 SQL로 넣은 논문으로 실제 서버의 목록·검색·컬렉션·더 보기),
-// translate(번역 화면, 브라우저 안 가짜 스트림), analyze(분석 화면, 가짜 응답). 아무것도 주지 않으면 모두 돈다.
+// translate(번역 화면, 브라우저 안 가짜 스트림), analyze(분석 화면, 가짜 응답),
+// hub-frame·hub-memo·hub-a11y(논문 허브의 틀·메모·접근성, 가짜 응답). 아무것도 주지 않으면 모두 돈다.
 // components와 signup 말고는 로컬 Supabase가 떠 있어야 한다(npm run db:start). 화면 검사용 계정은 끝나면 지운다.
 // 실행 준비와 묶음별 조건은 docs/dev/setup.md의 "화면 검사" 절.
 import { chromium } from 'playwright';
@@ -220,6 +221,8 @@ async function mockApi(page, handlers) {
 			const handler = handlers[key] ?? handlers[generic];
 			const result = handler ? await handler(u, request) : { status: 404, body: { error: { code: 'not_found', message: '' } } };
 			if (result.delay) await new Promise((resolve) => setTimeout(resolve, result.delay));
+			// abort: 네트워크 실패를 흉내 낸다
+			if (result.abort) return route.abort('failed').catch(() => {});
 			const status = result.status ?? 200;
 			await route
 				.fulfill(
@@ -1386,6 +1389,454 @@ async function analyzeScreens() {
 	await context.close();
 }
 
+// ---- 논문 허브(paper-hub-screen): 틀, 메모, 접근성. API는 모두 가짜 응답 ----
+
+const hubDetail = (n, extra = {}) => ({
+	...paper(n, n === 1 ? 'Attention Is All You Need' : `논문 ${n}`),
+	itemKey: `KEY${n}`,
+	s2PaperId: null,
+	attachment: { type: 'pdf' },
+	translationCount: 3,
+	analysisCount: 1,
+	...extra
+});
+
+// 허브가 부르는 경로를 가짜로 바꾼다. 메모 경로는 가운데에 UUID가 있어 :id로 바꿔 찾는다.
+async function mockHub(page, state) {
+	const handlers = {
+		'GET /api/papers/:id': (u) => state.detail(u),
+		'GET /api/papers/:id/memo': (u) => state.memoGet(u),
+		'PUT /api/papers/:id/memo': (u, request) => state.memoPut(u, request)
+	};
+	return mockApi(
+		page,
+		new Proxy(handlers, {
+			get(target, key) {
+				if (typeof key === 'string') {
+					const m = key.match(/^(GET|PUT) \/api\/papers\/[0-9a-f-]{36}\/memo$/);
+					if (m) return target[`${m[1]} /api/papers/:id/memo`];
+				}
+				return target[key];
+			}
+		})
+	);
+}
+
+const hubState = () => ({
+	detail: (u) => ({ body: hubDetail(Number(u.pathname.slice(-12)) || 1) }),
+	memoGet: () => ({ body: { markdown: '', updatedAt: null } }),
+	memoPut: (u, request) => ({ body: { markdown: JSON.parse(request.postData()).markdown, updatedAt: '2026-10-24T10:00:00Z' } })
+});
+
+const noHorizontalScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+const paneWidths = (page) =>
+	page.evaluate(() => ({
+		doc: document.querySelector('.doc-cell')?.getBoundingClientRect().width ?? 0,
+		memo: document.querySelector('[data-testid="memo-pane"]')?.getBoundingClientRect().width ?? 0,
+		work: document.querySelector('[data-testid="hub-work"]')?.getBoundingClientRect().width ?? 0
+	}));
+
+async function hubFrame() {
+	const tag = '허브 틀';
+	const { context } = await loggedInContext({ viewport: { width: 1280, height: 900 } });
+	const page = await context.newPage();
+	const state = hubState();
+	const calls = await mockHub(page, state);
+	const detailCalls = () => calls.filter((c) => c.method === 'GET' && c.path === `/api/papers/${paperId(1)}`).length;
+	const target = `/papers/${paperId(1)}`;
+
+	// 로딩 표시
+	state.detail = (u) => ({ body: hubDetail(1), delay: 1500 });
+	await openApp(page, target);
+	await page.getByRole('status').filter({ hasText: '논문을 불러오는 중' }).waitFor({ timeout: 1000 });
+	report(true, `${tag} 상세를 불러오는 동안 로딩 표시`);
+	await page.getByTestId('hub-work').waitFor();
+
+	// 404 paper_not_found
+	state.detail = () => apiError(404, 'paper_not_found');
+	await openApp(page, target);
+	await page.getByRole('alert').filter({ hasText: '논문을 찾을 수 없습니다' }).waitFor();
+	const back = page.getByRole('link', { name: '서재로 돌아가기' });
+	report(
+		(await back.getAttribute('href')) === '/library' &&
+			(await page.getByTestId('document-slot').count()) === 0 &&
+			(await page.getByTestId('memo-pane').count()) === 0,
+		`${tag} 404면 "논문을 찾을 수 없습니다"와 서재 링크, 원문·메모는 그리지 않음`
+	);
+	await openApp(page, '/papers/not-a-uuid');
+	await page.getByRole('alert').filter({ hasText: '논문을 찾을 수 없습니다' }).waitFor();
+	report(true, `${tag} UUID가 아닌 주소도 "논문을 찾을 수 없습니다"`);
+
+	// 500과 네트워크 실패 → 다시 시도
+	for (const [name, failure] of [
+		['500', () => apiError(500, 'internal_error')],
+		['네트워크 실패', () => ({ abort: true })]
+	]) {
+		state.detail = failure;
+		await openApp(page, target);
+		const retry = page.getByRole('button', { name: '다시 시도' });
+		await retry.waitFor();
+		const alertText = await page.getByRole('alert').innerText();
+		const before = detailCalls();
+		state.detail = () => ({ body: hubDetail(1) });
+		await retry.click();
+		await page.getByTestId('hub-work').waitFor();
+		report(
+			alertText.includes('논문을 불러오지 못했습니다') && !alertText.includes('internal detail') && detailCalls() === before + 1,
+			`${tag} ${name}이면 오류 안내와 "다시 시도", 누르면 상세를 다시 불러옴`
+		);
+	}
+
+	// 1280px: 좌우 분할, 최소 폭, 가로 스크롤 0
+	await openApp(page, target);
+	const work = page.getByTestId('hub-work');
+	await work.waitFor();
+	await page.waitForFunction(() => document.querySelector('[data-testid="hub-work"]')?.getAttribute('data-layout') === 'split');
+	let widths = await paneWidths(page);
+	report(widths.work >= 700 && widths.memo >= 320 && widths.doc >= 360, `${tag} 1280px에서 좌우 분할(작업 영역 ${Math.round(widths.work)}px, 원문 ${Math.round(widths.doc)}, 메모 ${Math.round(widths.memo)})`);
+	report(await noHorizontalScroll(page), `${tag} 1280px 가로 스크롤 0`);
+	report(
+		(await page.getByTestId('document-slot').getAttribute('data-type')) === 'pdf' &&
+			(await page.getByRole('link', { name: '원문 파일 열기' }).getAttribute('href')) === `/api/papers/${paperId(1)}/file`,
+		`${tag} 원문 자리에 첨부 종류와 파일 주소가 전달됨`
+	);
+
+	// 구분선 드래그: 오른쪽 끝으로 → 메모 320, 왼쪽 끝으로 → 원문 360
+	const divider = page.getByRole('separator', { name: '원문과 메모 폭 조절' });
+	const box = await divider.boundingBox();
+	const workBox = await work.boundingBox();
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(workBox.x + workBox.width - 10, box.y + box.height / 2, { steps: 8 });
+	await page.mouse.up();
+	widths = await paneWidths(page);
+	const memoAtRight = Math.round(widths.memo);
+	await page.mouse.move(workBox.x + workBox.width - memoAtRight - 4, box.y + box.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(workBox.x + 10, box.y + box.height / 2, { steps: 8 });
+	await page.mouse.up();
+	widths = await paneWidths(page);
+	report(memoAtRight === 320 && Math.round(widths.doc) === 360, `${tag} 구분선을 끝까지 끌어도 메모 ${memoAtRight}px, 원문 ${Math.round(widths.doc)}px에서 멈춤`);
+
+	// 번역·분석 링크와 개수
+	const translate = page.locator('.hub-head').getByRole('link', { name: /번역/ });
+	const analyze = page.locator('.hub-head').getByRole('link', { name: /분석/ });
+	report(
+		(await page.getByTestId('translation-count').innerText()) === '3' && (await page.getByTestId('analysis-count').innerText()) === '1',
+		`${tag} 번역 3·분석 1 응답에서 버튼에 3과 1`
+	);
+	report(
+		(await translate.getAttribute('href')) === `/translate?paperId=${paperId(1)}` &&
+			(await analyze.getAttribute('href')) === `/analyze?paperId=${paperId(1)}`,
+		`${tag} 번역·분석 링크가 /translate·/analyze?paperId=<id>`
+	);
+
+	// 폭을 줄이면 시트로 바뀌고, 입력 중인 메모와 원문 요소가 그대로
+	state.memoPut = () => ({ body: { markdown: '', updatedAt: null }, delay: 60000 });
+	await page.getByRole('textbox', { name: '메모 본문' }).click();
+	await page.keyboard.type('입력 중인 메모');
+	await page.getByTestId('document-slot').evaluate((el) => (el.dataset.mark = 'kept'));
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.waitForFunction(() => document.querySelector('[data-testid="hub-work"]')?.getAttribute('data-layout') === 'sheet');
+	const kept = await page.evaluate(() => ({
+		text: document.querySelector('textarea')?.value,
+		mark: document.querySelector('[data-testid="document-slot"]')?.dataset.mark
+	}));
+	report(kept.text === '입력 중인 메모' && kept.mark === 'kept', `${tag} 폭을 줄여 시트로 바뀌어도 입력 중인 글자와 원문 요소(배율 상태)가 유지`);
+	report(await noHorizontalScroll(page), `${tag} 390px 가로 스크롤 0`);
+	await context.close();
+
+	// 390px로 바로 열면 시트, 첨부 없음 안내
+	const narrow = await loggedInContext({ viewport: { width: 390, height: 844 } });
+	const small = await narrow.context.newPage();
+	const smallState = hubState();
+	smallState.detail = () => ({ body: hubDetail(1, { attachment: { type: null } }) });
+	await mockHub(small, smallState);
+	await openApp(small, target);
+	await small.getByTestId('hub-work').waitFor();
+	await small.waitForFunction(() => document.querySelector('[data-testid="hub-work"]')?.getAttribute('data-layout') === 'sheet');
+	report(
+		(await small.getByRole('button', { name: '메모 펼치기' }).count()) === 1 && (await noHorizontalScroll(small)),
+		`${tag} 390px에서 메모는 접힌 시트 손잡이, 가로 스크롤 0`
+	);
+	report((await small.getByText('원문이 없습니다').count()) === 1, `${tag} 첨부가 없으면 "원문이 없습니다"`);
+	for (const scheme of ['light', 'dark']) {
+		await small.emulateMedia({ colorScheme: scheme });
+		await small.screenshot({ path: `${outDir}/${scheme}-hub-390.png` });
+	}
+	await narrow.context.close();
+}
+
+async function hubMemo() {
+	const tag = '허브 메모';
+	const { context } = await loggedInContext({ viewport: { width: 1280, height: 900 } });
+	const page = await context.newPage();
+	const state = hubState();
+	const calls = await mockHub(page, state);
+	const puts = () => calls.filter((c) => c.method === 'PUT' && c.path.endsWith('/memo'));
+	const target = `/papers/${paperId(1)}`;
+	const editor = page.getByRole('textbox', { name: '메모 본문' });
+	const status = page.getByTestId('memo-status');
+	const draft = () => page.evaluate((key) => sessionStorage.getItem(key), `archi:memo-draft:${paperId(1)}`);
+
+	// 불러오기
+	state.memoGet = () => ({ body: { markdown: '저장된 메모', updatedAt: '2026-10-20T09:00:00Z' } });
+	await openApp(page, target);
+	await editor.waitFor();
+	report((await editor.inputValue()) === '저장된 메모', `${tag} GET /memo 본문이 편집 영역에 채워짐`);
+
+	// 0.5초 간격 연속 입력은 PUT 0회, 멈추고 1초 뒤 정확히 1회
+	await editor.click();
+	await page.keyboard.press('End');
+	const before = puts().length;
+	for (let i = 0; i < 5; i++) {
+		await page.keyboard.type('가');
+		await page.waitForTimeout(500);
+	}
+	const during = puts().length - before;
+	await page.waitForTimeout(1000);
+	const after = puts().length - before;
+	report(during === 0 && after === 1, `${tag} 0.5초 간격 입력 중 PUT ${during}회, 멈춘 뒤 1초에 ${after}회`);
+	report(JSON.parse(puts().at(-1).body).markdown === '저장된 메모가가가가가', `${tag} PUT 본문은 { markdown: 최신 내용 }`);
+	await status.filter({ hasText: '모두 저장됨' }).waitFor();
+	report((await draft()) === null, `${tag} 저장에 성공하면 초안을 지움`);
+
+	// 오류 세 가지: 안내 문구와 입력 유지
+	const failures = [
+		['409 zotero_not_connected', () => apiError(409, 'zotero_not_connected'), 'Zotero를 연결해야 저장할 수 있습니다'],
+		['413 payload_too_large', () => apiError(413, 'payload_too_large'), '메모가 너무 길어 저장하지 못했습니다'],
+		['네트워크 실패', () => ({ abort: true }), '서버에 연결하지 못했습니다']
+	];
+	for (const [name, failure, message] of failures) {
+		state.memoPut = failure;
+		await editor.click();
+		await page.keyboard.press('End');
+		await page.keyboard.type('!');
+		const value = await editor.inputValue();
+		const alert = page.getByRole('alert').filter({ hasText: message });
+		await alert.waitFor({ timeout: 5000 });
+		report(
+			(await editor.inputValue()) === value &&
+				(await alert.getByRole('button', { name: '다시 시도' }).count()) === 1 &&
+				(await status.innerText()).includes('저장하지 못함') &&
+				(await draft()) === value,
+			`${tag} ${name}: "${message}" 안내, 입력 유지, 초안 보관, 다시 시도 버튼`
+		);
+	}
+	// 네트워크 실패 뒤 다시 시도 → 성공, 초안 삭제
+	state.memoPut = (u, request) => ({ body: { markdown: JSON.parse(request.postData()).markdown, updatedAt: '2026-10-24T10:00:00Z' } });
+	const retryBefore = puts().length;
+	await page.getByRole('button', { name: '다시 시도' }).click();
+	await status.filter({ hasText: '모두 저장됨' }).waitFor();
+	report(puts().length === retryBefore + 1 && (await draft()) === null, `${tag} 다시 시도가 성공하면 "모두 저장됨"이고 초안 삭제`);
+
+	// 401: 로그인 화면으로 가지 않고 로그인 링크, 입력 유지
+	state.memoPut = () => apiError(401, 'unauthenticated');
+	await editor.click();
+	await page.keyboard.type('?');
+	const loginValue = await editor.inputValue();
+	const loginLink = page.getByRole('link', { name: '다시 로그인' });
+	await loginLink.waitFor({ timeout: 5000 });
+	report(
+		new URL(page.url()).pathname === target && (await editor.inputValue()) === loginValue && (await loginLink.getAttribute('href')).startsWith('/login?redirect='),
+		`${tag} 401이면 화면에 머물며 로그인 링크, 입력 유지`
+	);
+
+	// 다른 논문에 갔다가 돌아오면 초안 복원
+	state.memoPut = () => apiError(500, 'internal_error');
+	state.memoGet = () => ({ body: { markdown: '서버의 옛 메모', updatedAt: null } });
+	await editor.fill('저장 전 초안');
+	await page.getByRole('alert').filter({ hasText: '서버에 연결하지 못했습니다' }).waitFor({ timeout: 5000 });
+	await openApp(page, `/papers/${paperId(2)}`);
+	await editor.waitFor();
+	const otherValue = await editor.inputValue();
+	await openApp(page, target);
+	await editor.waitFor();
+	report(otherValue === '서버의 옛 메모' && (await editor.inputValue()) === '저장 전 초안', `${tag} 다른 논문에 갔다가 돌아오면 저장 전 초안 복원`);
+
+	// 긴 메모(200줄) 중간에서 줄바꿈해도 편집 중인 줄이 화면 안에
+	state.memoPut = (u, request) => ({ body: { markdown: JSON.parse(request.postData()).markdown, updatedAt: null } });
+	const long = Array.from({ length: 200 }, (_, i) => `줄 ${i + 1}`).join('\n');
+	await editor.fill(long);
+	await page.evaluate(() => {
+		const el = document.querySelector('textarea');
+		const scroller = document.querySelector('[data-testid="memo-scroller"]');
+		const pos = el.value.indexOf('줄 101');
+		el.focus();
+		el.setSelectionRange(pos, pos);
+		const lh = parseFloat(getComputedStyle(el).lineHeight);
+		scroller.scrollTop = el.offsetTop + 100 * lh - scroller.clientHeight / 2;
+	});
+	for (let i = 0; i < 3; i++) await page.keyboard.press('Enter');
+	const caretVisible = await page.evaluate(() => {
+		const el = document.querySelector('textarea');
+		const scroller = document.querySelector('[data-testid="memo-scroller"]');
+		const line = el.value.slice(0, el.selectionStart).split('\n').length - 1;
+		const lh = parseFloat(getComputedStyle(el).lineHeight);
+		const top = el.getBoundingClientRect().top + line * lh;
+		const box = scroller.getBoundingClientRect();
+		return { ok: top >= box.top && top + lh <= box.bottom, scrollTop: scroller.scrollTop };
+	});
+	report(caretVisible.ok && caretVisible.scrollTop > 0, `${tag} 200줄 메모 중간에서 Enter를 쳐도 편집 중인 줄이 화면 안(scrollTop ${Math.round(caretVisible.scrollTop)})`);
+
+	// 미리보기: 원본 HTML은 글자로, 마크다운 서식은 그대로
+	const dialogs = [];
+	page.on('dialog', (dialog) => {
+		dialogs.push(dialog.type());
+		void dialog.dismiss();
+	});
+	const unsafe = [
+		'# 제목',
+		'',
+		'- 항목 하나',
+		'- 항목 둘',
+		'',
+		'[링크](https://example.com)',
+		'',
+		'```',
+		'const a = 1;',
+		'```',
+		'',
+		'<script>window.__memoXss = 1; alert(1)</script>',
+		'',
+		'<img src=x onerror="window.__memoXss = 2; alert(2)">',
+		'',
+		'[나쁜 링크](javascript:alert(3))'
+	].join('\n');
+	await editor.fill(unsafe);
+	await page.getByRole('button', { name: '미리보기' }).click();
+	const preview = page.getByTestId('memo-preview');
+	await preview.waitFor();
+	await page.waitForTimeout(300);
+	const shape = await preview.evaluate((el) => ({
+		h1: el.querySelector('h1')?.textContent,
+		items: el.querySelectorAll('ul > li').length,
+		link: el.querySelector('a')?.getAttribute('href'),
+		links: el.querySelectorAll('a').length,
+		code: el.querySelector('pre > code')?.textContent,
+		scripts: el.querySelectorAll('script, img, iframe, [onerror]').length,
+		text: el.textContent,
+		flag: window.__memoXss
+	}));
+	report(
+		shape.scripts === 0 && shape.flag === undefined && dialogs.length === 0 && shape.text.includes('<script>') && shape.text.includes('<img src=x'),
+		`${tag} 미리보기의 <script>·<img onerror>는 실행되지 않고(대화상자 ${dialogs.length}) 글자로 보임`
+	);
+	report(
+		shape.h1 === '제목' && shape.items === 2 && shape.link === 'https://example.com' && shape.links === 1 && shape.code?.includes('const a = 1;'),
+		`${tag} 미리보기의 제목·목록·링크·코드 블록은 서식대로, javascript: 링크는 글자만`
+	);
+	for (const scheme of ['light', 'dark']) {
+		await page.emulateMedia({ colorScheme: scheme });
+		await page.getByTestId('memo-pane').screenshot({ path: `${outDir}/${scheme}-hub-memo-1280.png` });
+	}
+	await context.close();
+}
+
+async function hubA11y() {
+	const tag = '허브 접근성';
+	const { context } = await loggedInContext({ viewport: { width: 390, height: 844 } });
+	const page = await context.newPage();
+	const state = hubState();
+	await mockHub(page, state);
+	const target = `/papers/${paperId(1)}`;
+	await openApp(page, target);
+	await page.getByTestId('hub-work').waitFor();
+	const handle = page.getByRole('button', { name: /메모 (펼치기|접기)/ });
+	const sheetState = () =>
+		page.evaluate(() => {
+			const sheet = document.querySelector('[data-testid="memo-pane"]');
+			const handleEl = sheet?.querySelector('[aria-expanded]');
+			const docInert = !!document.querySelector('.doc-cell')?.closest('[inert]');
+			const topbarInert = !!document.querySelector('.topbar')?.closest('[inert]');
+			const headInert = !!document.querySelector('.hub-head')?.closest('[inert]');
+			return {
+				expanded: handleEl?.getAttribute('aria-expanded') === 'true',
+				focusInside: !!document.activeElement && sheet.querySelector('.body')?.contains(document.activeElement),
+				focusOnHandle: document.activeElement === handleEl,
+				backgroundInert: docInert && topbarInert && headInert,
+				anyInert: docInert || topbarInert || headInert
+			};
+		});
+
+	const closers = [
+		['Escape', () => page.keyboard.press('Escape')],
+		['배경 클릭', async () => {
+			const box = await page.getByTestId('hub-work').boundingBox();
+			await page.mouse.click(box.x + 20, box.y + 20);
+		}],
+		['닫기 버튼', () => page.getByRole('button', { name: '메모 닫기' }).click()]
+	];
+	for (const [name, closeSheet] of closers) {
+		await handle.focus();
+		await page.keyboard.press('Enter');
+		await page.waitForFunction(() => document.querySelector('[data-testid="memo-pane"] [aria-expanded]')?.getAttribute('aria-expanded') === 'true');
+		await page.waitForTimeout(100);
+		const opened = await sheetState();
+		report(opened.focusInside && opened.backgroundInert, `${tag} 시트를 열면 포커스가 시트 안, 배경(원문·머리·셸)은 inert (${name} 확인 전)`);
+		await closeSheet();
+		await page.waitForFunction(() => document.querySelector('[data-testid="memo-pane"] [aria-expanded]')?.getAttribute('aria-expanded') === 'false');
+		await page.waitForTimeout(100);
+		const closed = await sheetState();
+		report(closed.focusOnHandle && !closed.anyInert, `${tag} ${name}로 닫으면 포커스가 손잡이로 돌아오고 inert 해제`);
+	}
+
+	// 모든 버튼과 링크에 접근 가능한 이름
+	await handle.focus();
+	await page.keyboard.press('Enter');
+	await page.waitForTimeout(100);
+	const unnamed = await page.evaluate(() =>
+		[...document.querySelectorAll('main button, main [role="button"], main a[href], main [role="separator"]')]
+			.filter((el) => !(el.getAttribute('aria-label') || el.textContent).trim())
+			.map((el) => el.outerHTML.slice(0, 80))
+	);
+	report(unnamed.length === 0, `${tag} 허브의 버튼·링크에 모두 접근 가능한 이름 (이름 없음 ${unnamed.length}개)`);
+	await page.keyboard.press('Escape');
+
+	// 1280px: 구분선을 화살표로 조절
+	await page.setViewportSize({ width: 1280, height: 900 });
+	const divider = page.getByRole('separator', { name: '원문과 메모 폭 조절' });
+	await divider.waitFor();
+	await divider.focus();
+	const start = Number(await divider.getAttribute('aria-valuenow'));
+	await page.keyboard.press('ArrowLeft');
+	await page.keyboard.press('ArrowLeft');
+	const left = Number(await divider.getAttribute('aria-valuenow'));
+	await page.keyboard.press('ArrowRight');
+	const right = Number(await divider.getAttribute('aria-valuenow'));
+	// 처음 원문 폭이 최대(메모 320px)이면 오른쪽 화살표는 더 가지 않는다
+	await page.keyboard.press('ArrowRight');
+	await page.keyboard.press('ArrowRight');
+	const capped = Number(await divider.getAttribute('aria-valuenow'));
+	report(
+		left === start - 32 && right === start - 16 && capped === Math.min(start, Number(await divider.getAttribute('aria-valuemax'))),
+		`${tag} 구분선이 좌우 화살표로 16px씩 움직이고 최소 폭에서 멈춤 (${start} → ${left} → ${right} → ${capped})`
+	);
+
+	// 새로 쓴 글자색 대비
+	state.memoPut = () => apiError(409, 'zotero_not_connected');
+	await page.getByRole('textbox', { name: '메모 본문' }).click();
+	await page.keyboard.type('대비 확인');
+	await page.getByRole('alert').filter({ hasText: 'Zotero' }).waitFor({ timeout: 5000 });
+	const selectors = ['.hub-head h1', '.hub-head .meta', '.hub-head .count', '.note-label', '[data-testid="memo-status"]', '.tool', '.notice [role="alert"]', '.editor', '[data-testid="document-slot"] .title', '[data-testid="document-slot"] .description'];
+	for (const scheme of ['light', 'dark']) {
+		await page.emulateMedia({ colorScheme: scheme });
+		const low = [];
+		for (const selector of selectors) {
+			if (!(await page.locator(selector).count())) {
+				low.push(`${selector}(없음)`);
+				continue;
+			}
+			const { color, bg } = await colorsOf(page, selector);
+			const ratio = contrast(color, bg);
+			if (ratio < 4.5) low.push(`${selector} ${ratio.toFixed(2)}`);
+		}
+		report(low.length === 0, `${tag} ${scheme} 새 글자색 ${selectors.length}곳 대비 4.5:1 이상${low.length ? ` (${low.join(', ')})` : ''}`);
+		await page.screenshot({ path: `${outDir}/${scheme}-hub-1280.png` });
+	}
+	await context.close();
+}
+
 // ---- 실행 ----
 
 for (const scheme of ['light', 'dark']) {
@@ -1399,6 +1850,9 @@ if (want('layout')) await layouts();
 if (want('library-real')) await libraryReal();
 if (want('translate')) await translateScreens();
 if (want('analyze')) await analyzeScreens();
+if (want('hub-frame')) await hubFrame();
+if (want('hub-memo')) await hubMemo();
+if (want('hub-a11y')) await hubA11y();
 if (dbUsed) cleanupDb();
 
 await browser.close();
