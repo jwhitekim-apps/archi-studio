@@ -41,7 +41,9 @@
 		const offsetY = (clientY ?? rect.top + rect.height / 2) - rect.top;
 		const ratio = clamped / zoom;
 
-		scrollEl.scrollTop = (scrollEl.scrollTop + offsetY) * ratio - offsetY;
+		// 스크롤 상자의 위쪽 padding은 배율과 함께 커지지 않으므로 빼고 계산한다(빼지 않으면 115%에서 약 3px 밀린다)
+		const padTop = parseFloat(getComputedStyle(scrollEl).paddingTop) || 0;
+		scrollEl.scrollTop = (scrollEl.scrollTop + offsetY - padTop) * ratio + padTop - offsetY;
 		zoom = clamped;
 	}
 
@@ -118,7 +120,7 @@
 	{:else}
 		<div class="viewer-empty">
 			<Icon name="file" size={24} />
-			<p>첨부된 원문이 없어요.</p>
+			<p>첨부된 원문이 없습니다.</p>
 		</div>
 	{/if}
 </section>

@@ -420,7 +420,7 @@
 {/if}
 {#if error}
 	<div class="pdf-status">
-		<Notice kind="error">PDF를 불러오지 못했어요: {error}</Notice>
+		<Notice kind="error">PDF를 불러오지 못했습니다: {error}</Notice>
 	</div>
 {/if}
 <!-- 확대 직후(재렌더를 미루는 150ms)에만 미리보기 transform을 건다. 쉬는 동안 transform이 남아 있으면

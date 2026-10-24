@@ -4,7 +4,7 @@
 // library(서재, 가짜 응답), settings(설정, 가짜 응답), layout(화면 크기·테마별 배치),
 // library-real(로컬 DB에 SQL로 넣은 논문으로 실제 서버의 목록·검색·컬렉션·더 보기),
 // translate(번역 화면, 브라우저 안 가짜 스트림), analyze(분석 화면, 가짜 응답),
-// hub-frame·hub-memo·hub-a11y(논문 허브의 틀·메모·접근성, 가짜 응답). 아무것도 주지 않으면 모두 돈다.
+// hub-frame·hub-memo·hub-a11y·hub-viewer(논문 허브의 틀·메모·접근성·원문 뷰어, 가짜 응답). 아무것도 주지 않으면 모두 돈다.
 // components와 signup 말고는 로컬 Supabase가 떠 있어야 한다(npm run db:start). 화면 검사용 계정은 끝나면 지운다.
 // 실행 준비와 묶음별 조건은 docs/dev/setup.md의 "화면 검사" 절.
 import { chromium } from 'playwright';
@@ -1497,7 +1497,7 @@ async function hubFrame() {
 	report(await noHorizontalScroll(page), `${tag} 1280px 가로 스크롤 0`);
 	report(
 		(await page.getByTestId('document-slot').getAttribute('data-type')) === 'pdf' &&
-			(await page.getByRole('link', { name: '원문 파일 열기' }).getAttribute('href')) === `/api/papers/${paperId(1)}/file`,
+			(await page.getByTestId('document-slot').getByRole('link', { name: '새 창에서 원문 열기' }).getAttribute('href')) === `/api/papers/${paperId(1)}/file`,
 		`${tag} 원문 자리에 첨부 종류와 파일 주소가 전달됨`
 	);
 
@@ -1559,7 +1559,7 @@ async function hubFrame() {
 		(await small.getByRole('button', { name: '메모 펼치기' }).count()) === 1 && (await noHorizontalScroll(small)),
 		`${tag} 390px에서 메모는 접힌 시트 손잡이, 가로 스크롤 0`
 	);
-	report((await small.getByText('원문이 없습니다').count()) === 1, `${tag} 첨부가 없으면 "원문이 없습니다"`);
+	report((await small.getByText('첨부된 원문이 없습니다.').count()) === 1, `${tag} 첨부가 없으면 "첨부된 원문이 없습니다."`);
 	for (const scheme of ['light', 'dark']) {
 		await small.emulateMedia({ colorScheme: scheme });
 		await small.screenshot({ path: `${outDir}/${scheme}-hub-390.png` });
@@ -1818,7 +1818,7 @@ async function hubA11y() {
 	await page.getByRole('textbox', { name: '메모 본문' }).click();
 	await page.keyboard.type('대비 확인');
 	await page.getByRole('alert').filter({ hasText: 'Zotero' }).waitFor({ timeout: 5000 });
-	const selectors = ['.hub-head h1', '.hub-head .meta', '.hub-head .count', '.note-label', '[data-testid="memo-status"]', '.tool', '.notice [role="alert"]', '.editor', '[data-testid="document-slot"] .title', '[data-testid="document-slot"] .description'];
+	const selectors = ['.hub-head h1', '.hub-head .meta', '.hub-head .count', '.note-label', '[data-testid="memo-status"]', '.tool', '.notice [role="alert"]', '.editor', '[data-testid="document-slot"] .zoom-value'];
 	for (const scheme of ['light', 'dark']) {
 		await page.emulateMedia({ colorScheme: scheme });
 		const low = [];
@@ -1837,6 +1837,178 @@ async function hubA11y() {
 	await context.close();
 }
 
+// ---- 허브 원문 뷰어(hub-viewer): 시험 시작 때 page.pdf()로 만든 3쪽 PDF와 HTML 첨부를 가짜 파일 응답으로 준다 ----
+
+// 1쪽 아래쪽에 빨간 사각형(기준 표시)을 둔다. 글꼴 없는 서버에서도 캔버스 픽셀로 위치를 잴 수 있다
+async function makeHubPdf() {
+	const page = await browser.newPage();
+	await page.setContent(`<!doctype html><style>
+		@page { size: A4; margin: 0 }
+		body { margin: 0 }
+		section { height: 296mm; overflow: hidden; position: relative; page-break-after: always; font: 24px sans-serif }
+		p { margin: 20mm }
+		section:last-child { page-break-after: auto }
+		.copy { position: absolute; top: 40%; left: 0 }
+		.mark { position: absolute; left: 40%; top: 85%; width: 20%; height: 12mm; background: rgb(255, 0, 0) }
+	</style>
+	<section><p>Hub viewer page one</p><p class="copy">Middle line for copy check</p><div class="mark"></div></section>
+	<section><p>Page two</p></section>
+	<section><p>Page three</p></section>`);
+	const pdf = await page.pdf({ format: 'A4', printBackground: true });
+	await page.close();
+	return pdf;
+}
+
+const HUB_HTML = `<!doctype html><html><body><h1>HTML snapshot</h1>
+<script>document.body.dataset.ran = '1'; try { parent.__hubScriptRan = 1 } catch (e) {}</script></body></html>`;
+
+async function hubViewerPage(type, file) {
+	const { context } = await loggedInContext({ viewport: { width: 1280, height: 900 } });
+	const page = await context.newPage();
+	const state = hubState();
+	state.detail = () => ({ body: hubDetail(1, { attachment: { type } }) });
+	await mockHub(page, state);
+	// 나중에 단 route가 먼저 잡으므로 파일 경로만 이 처리기가 받는다
+	if (file) await page.route('**/api/papers/*/file', (route) => route.fulfill(file));
+	await openApp(page, `/papers/${paperId(1)}`);
+	await page.getByTestId('hub-work').waitFor();
+	return { context, page };
+}
+
+// 1쪽 캔버스에서 빨간 사각형의 위쪽 끝을 찾아 화면 y 좌표로 돌려준다
+const markY = (page) =>
+	page.evaluate(() => {
+		const canvas = document.querySelector('.pdfViewer .page[data-page-number="1"] canvas');
+		if (!canvas) return null;
+		const ctx = canvas.getContext('2d', { willReadFrequently: true });
+		const x = Math.floor(canvas.width / 2);
+		const column = ctx.getImageData(x, 0, 1, canvas.height).data;
+		for (let y = 0; y < canvas.height; y++) {
+			const [r, g, b] = [column[y * 4], column[y * 4 + 1], column[y * 4 + 2]];
+			if (r > 200 && g < 80 && b < 80) {
+				const rect = canvas.getBoundingClientRect();
+				return rect.top + (y / canvas.height) * rect.height;
+			}
+		}
+		return null;
+	});
+
+async function hubViewer() {
+	const tag = '허브 원문';
+	const pdf = await makeHubPdf();
+
+	// PDF: 첫 쪽부터, 3쪽, 폭 맞춤 가로 스크롤 0
+	const { context, page } = await hubViewerPage('pdf', { status: 200, contentType: 'application/pdf', body: pdf });
+	await page.locator('.pdfViewer .page[data-page-number="1"] canvas').waitFor({ timeout: 20000 });
+	await page.waitForFunction(() => !document.querySelector('.pdf-status'), null, { timeout: 20000 });
+	// 첫 렌더 직후 pdf.js가 스크롤 위치를 한 번 더 맞추므로, scrollTop이 0.5초 동안 그대로일 때까지 기다린다
+	await page.evaluate(async () => {
+		const el = document.querySelector('.viewer-scroll');
+		let last = -1;
+		let stable = 0;
+		while (stable < 5) {
+			await new Promise((r) => setTimeout(r, 100));
+			stable = el.scrollTop === last ? stable + 1 : 0;
+			last = el.scrollTop;
+		}
+	});
+	const first = await page.evaluate(() => {
+		const scroll = document.querySelector('.viewer-scroll');
+		const one = document.querySelector('.pdfViewer .page[data-page-number="1"]');
+		const box = scroll.getBoundingClientRect();
+		const top = one.getBoundingClientRect().top;
+		return {
+			pages: document.querySelectorAll('.pdfViewer .page[data-page-number]').length,
+			scrollTop: scroll.scrollTop,
+			// pdf.js가 처음에 1쪽 테두리 쪽으로 조금 스크롤할 수 있어, 1쪽이 화면 맨 위를 차지하는지로 본다
+			firstVisible: top <= box.top + box.height / 2 && one.getBoundingClientRect().bottom > box.top,
+			noHScroll: scroll.scrollWidth <= scroll.clientWidth
+		};
+	});
+	report(first.pages === 3 && first.scrollTop < 100 && first.firstVisible, `${tag} 3쪽 PDF가 첫 쪽부터 그려짐 (쪽 ${first.pages}, scrollTop ${first.scrollTop})`);
+	report(first.noHScroll && (await noHorizontalScroll(page)), `${tag} 폭 맞춤에서 원문 상자와 문서 모두 가로 스크롤 0`);
+
+	// 복사: 글꼴 없는 서버에서는 텍스트 레이어 span 크기가 0이라 드래그 선택을 할 수 없다. 그때는 확인 불가로 남긴다
+	// 텍스트 레이어(tabindex=0)는 처음 누를 때 포커스를 받으며 스크롤이 움직인다. 빈 곳을 한 번 누른 뒤 위치를 잰다
+	const pageBox = await page.locator('.pdfViewer .page[data-page-number="1"]').boundingBox();
+	await page.mouse.click(pageBox.x + pageBox.width / 2, pageBox.y + Math.min(pageBox.height, 400) - 20);
+	await page.waitForTimeout(300);
+	// 1쪽 가운데 줄 전체를 왼쪽 끝에서 오른쪽 끝까지 끈다
+	const span = await page.evaluate(() => {
+		const all = [...document.querySelectorAll('.pdfViewer .page[data-page-number="1"] .textLayer span')];
+		const from = all.findIndex((s) => s.textContent === 'Middle');
+		const spans = all.slice(from).filter((s) => s.textContent.trim());
+		if (!spans.length) return null;
+		const a = spans[0].getBoundingClientRect();
+		const b = spans.at(-1).getBoundingClientRect();
+		return { x: a.x, y: a.y, w: b.right - a.x, h: a.height, text: 'Middle line for copy check' };
+	});
+	if (span && span.w > 4 && span.h > 4) {
+		await page.mouse.move(span.x + 0.5, span.y + span.h / 2);
+		await page.mouse.down();
+		await page.mouse.move(span.x + span.w + 2, span.y + span.h / 2, { steps: 10 });
+		await page.mouse.up();
+		const copied = await page.evaluate(() => window.getSelection().toString());
+		report(copied.replace(/\s+/g, ' ').trim() === span.text.trim(), `${tag} 글자 드래그 선택 문자열이 원문과 일치 ("${copied.trim()}")`);
+	} else {
+		console.log(`SKIP ${tag} 복사 확인 불가: 텍스트 레이어 span ${span ? `크기 ${span.w.toFixed(1)}×${span.h.toFixed(1)}` : '없음'} (글꼴 없는 서버)`);
+	}
+	// 기준 표시를 스크롤 상자 가운데로 옮긴 뒤 확대한다(확대 버튼은 화면 가운데를 고정점으로 쓴다)
+	const center = await page.evaluate(() => {
+		const r = document.querySelector('.viewer-scroll').getBoundingClientRect();
+		return r.top + r.height / 2;
+	});
+	const y0 = await markY(page);
+	await page.evaluate((dy) => (document.querySelector('.viewer-scroll').scrollTop += dy), y0 - center);
+	await page.waitForTimeout(300);
+	const before = await markY(page);
+	const zoomValue = page.getByTestId('document-slot').locator('.zoom-value');
+	const zoomBefore = parseInt(await zoomValue.innerText(), 10);
+	const widthBefore = await page.evaluate(() => document.querySelector('.pdfViewer .page[data-page-number="1"]').getBoundingClientRect().width);
+	await page.getByRole('button', { name: '원문 확대' }).click();
+	await page.waitForFunction(
+		(w) => document.querySelector('.pdfViewer .page[data-page-number="1"]').getBoundingClientRect().width > w + 1,
+		widthBefore
+	);
+	// 캔버스 다시 그리기를 기다린다
+	await page.waitForTimeout(1200);
+	const zoomAfter = parseInt(await zoomValue.innerText(), 10);
+	const after = await markY(page);
+	report(zoomAfter > zoomBefore, `${tag} 확대 버튼으로 배율 증가 (${zoomBefore}% → ${zoomAfter}%)`);
+	report(
+		before !== null && after !== null && Math.abs(after - before) <= 2,
+		`${tag} 확대 전후 기준 표시의 화면 세로 위치 변화 2px 이하 (${before?.toFixed(1)} → ${after?.toFixed(1)})`
+	);
+
+	await page.screenshot({ path: `${outDir}/light-hub-viewer-pdf-1280.png` });
+	await context.close();
+
+	// HTML 첨부: sandbox 프레임, 안의 스크립트는 실행되지 않음
+	const html = await hubViewerPage('html', { status: 200, contentType: 'text/html', body: HUB_HTML });
+	const frame = html.page.locator('iframe.html-snapshot-frame');
+	await frame.waitFor();
+	await html.page.waitForFunction(() => document.querySelector('iframe.html-snapshot-frame')?.contentDocument?.querySelector('h1'), null, { timeout: 10000 });
+	await html.page.waitForTimeout(300);
+	const sandboxed = await html.page.evaluate(() => {
+		const f = document.querySelector('iframe.html-snapshot-frame');
+		return {
+			sandbox: f.getAttribute('sandbox'),
+			ran: f.contentDocument.body.dataset.ran ?? null,
+			parentFlag: window.__hubScriptRan ?? null
+		};
+	});
+	report(
+		sandboxed.sandbox !== null && !sandboxed.sandbox.includes('allow-scripts') && sandboxed.ran === null && sandboxed.parentFlag === null,
+		`${tag} HTML 첨부는 sandbox="${sandboxed.sandbox}" 프레임, 안의 <script> 실행 안 됨`
+	);
+	await html.context.close();
+
+	// 첨부 없음
+	const none = await hubViewerPage(null, null);
+	report((await none.page.getByTestId('document-slot').getByText('첨부된 원문이 없습니다.').count()) === 1, `${tag} 첨부가 없으면 "첨부된 원문이 없습니다."`);
+	await none.context.close();
+}
+
 // ---- 실행 ----
 
 for (const scheme of ['light', 'dark']) {
@@ -1853,6 +2025,7 @@ if (want('analyze')) await analyzeScreens();
 if (want('hub-frame')) await hubFrame();
 if (want('hub-memo')) await hubMemo();
 if (want('hub-a11y')) await hubA11y();
+if (want('hub-viewer')) await hubViewer();
 if (dbUsed) cleanupDb();
 
 await browser.close();
