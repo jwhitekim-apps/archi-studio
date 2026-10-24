@@ -26,7 +26,7 @@
 
 - [x] 4.1 번역·분석 화면(결과가 있는 상태 포함)을 라이트·다크 × 1280·390px로 찍어 직접 보고, 가로 넘침 0px, 직접 색 지정 0건(`grep -rnE "#[0-9a-fA-F]{3,8}\b|rgba?\(" src/routes src/lib/components --include=*.svelte`), Tab 순서(입력창, 번역·중지·복사, 이력), 390px에서 설정 버튼으로 패널이 열리고 포커스가 안으로 들어감을 검사 묶음으로 확인한다
 - [x] 4.2 `docs/dev/setup.md`의 화면 검사 표에 `translate`, `analyze` 묶음을 더하고, `docs/dev/ui-components.md`에 `PanelContent`와 `PaperPicker` 사용법을 적는다. 화면이 쓰는 응답 필드가 `docs/api/openapi.yaml`에 모두 있는지 대조한다
-- [ ] 4.3 실제 서버로 확인한다: 로컬 DB와 학교 모델(`.env`의 `AI_PROVIDER=local`)로 로그인한 계정에서 번역 한 번(스트리밍과 이력 추가), 같은 문장 다시 번역(저장된 번역 재사용), 논문 하나(실제 arXiv 논문 정보를 SQL로 넣음) 분석과 저장된 결과 재조회를 확인한다. 그다음 `npm run check`, `npm test`, `npm run test:auth`, `npm run build`, `npm run check:tokens`, `openspec validate archi-studio-ui-translate-analyze --strict`가 모두 통과하고, 끝나면 로컬 DB와 개발 서버를 내린다
+- [x] 4.3 실제 서버로 확인한다: 로컬 DB와 학교 모델(`.env`의 `AI_PROVIDER=local`)로 로그인한 계정에서 번역 한 번(스트리밍과 이력 추가), 같은 문장 다시 번역(저장된 번역 재사용), 논문 하나(실제 arXiv 논문 정보를 SQL로 넣음) 분석과 저장된 결과 재조회를 확인한다. 그다음 `npm run check`, `npm test`, `npm run test:auth`, `npm run build`, `npm run check:tokens`, `openspec validate archi-studio-ui-translate-analyze --strict`가 모두 통과하고, 끝나면 로컬 DB와 개발 서버를 내린다
 
 ## Workflow follow-up
 
@@ -37,3 +37,9 @@
 - 번역(학교 모델): 새 번역 39.6초에 X-Cache MISS로 완료, 진행 중 일부 글자 표시 확인. 같은 문장 재번역은 HIT로 0.1초. 같은 문장을 논문에 연결해 번역하면 이력 행이 2개(논문 연결 1개)가 된다.
 - 분석: Semantic Scholar가 키 없는 요청을 4분 넘게 429로 거절해 `upstream_unavailable`(502)이 났다. 화면은 "일시적인 오류"와 "다시 시도"를 맞게 보였다. PDF 없는 논문은 Semantic Scholar 없이 분석할 수 없으므로 4.3의 분석 확인은 남았다. `S2_API_KEY`를 넣거나 요청 제한이 풀린 뒤 다시 확인한다.
 - 학교 모델 번역에 한자가 섞인 결과("어腾션")가 한 번 나왔다. 화면 문제가 아니라 모델 출력 품질 문제다.
+
+## 메모 (2026-10-24 실제 서버 재확인)
+
+- 원인: 학교 모델(qwen3)이 답 전에 생각을 길게 써서 출력 한도 4096을 다 쓰고, 번역은 빈 응답, 분석 요약은 잘린 JSON을 냈다(3번에 1번꼴, 한 번에 70~85초).
+- 학교 서버가 따르는 끄기 설정은 `reasoning_effort: "none"`뿐이었다(`enable_thinking`, `/no_think`, `"low"`는 효과 없음). 사용자 결정으로 로컬 모델 요청에 넣었다(Anthropic·Gemini는 쓰지 않는다).
+- 결과: 번역 38.2초 MISS, 재번역 HIT 0.1초, 논문 연결 이력 2행, 분석(Semantic Scholar 키 사용) 57.3초에 결과 표시, 다시 열면 저장된 결과 즉시 표시. 생각을 끈 탓에 "attention"이 "주의"로 번역되는 등 용어 품질은 떨어질 수 있다.
