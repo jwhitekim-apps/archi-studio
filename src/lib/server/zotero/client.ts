@@ -179,3 +179,44 @@ export async function deleteItem(api: ZoteroApi, itemKey: string, version: numbe
 	if (!res.ok) throw new ZoteroUnavailableError(what, res.status);
 	return 'deleted';
 }
+
+// 논문 항목에 자식 노트를 만든다(메모). 쓰기 토큰은 같은 요청의 재전송을 막는다.
+export async function createChildNote(api: ZoteroApi, parentKey: string, html: string, tags: string[]): Promise<ZoteroItem> {
+	const what = '노트 생성';
+	const res = await send(
+		api,
+		`${prefix(api)}/items`,
+		{
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'Zotero-Write-Token': randomUUID().replace(/-/g, '') },
+			body: JSON.stringify([{ itemType: 'note', parentItem: parentKey, note: html, tags: tags.map((tag) => ({ tag })) }])
+		},
+		what
+	);
+	if (!res.ok) {
+		await res.body?.cancel().catch(() => {});
+		throw new ZoteroUnavailableError(what, res.status);
+	}
+	const body = await json<{ successful?: Record<string, ZoteroItem> }>(res, what);
+	const created = body.successful?.['0'];
+	if (!created) throw new ZoteroUnavailableError(what, null);
+	return created;
+}
+
+// 노트 본문을 고친다. 버전이 어긋나면(412) ZoteroVersionConflictError.
+export async function patchNote(api: ZoteroApi, noteKey: string, version: number, html: string): Promise<void> {
+	const what = '노트 수정';
+	const res = await send(
+		api,
+		`${prefix(api)}/items/${noteKey}`,
+		{
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json', 'If-Unmodified-Since-Version': String(version) },
+			body: JSON.stringify({ note: html })
+		},
+		what
+	);
+	await res.body?.cancel().catch(() => {});
+	if (res.status === 412) throw new ZoteroVersionConflictError();
+	if (!res.ok) throw new ZoteroUnavailableError(what, res.status);
+}

@@ -386,6 +386,10 @@ paths:
           $ref: '#/components/responses/Unauthenticated'
         '404':
           $ref: '#/components/responses/PaperNotFound'
+        '409':
+          $ref: '#/components/responses/ZoteroNotConnected'
+        '502':
+          $ref: '#/components/responses/ZoteroUnavailable'
     put:
       tags: [notes]
       summary: 메모 저장 (멱등, Zotero 자식 노트 `zotero-insight:memo`)
@@ -419,6 +423,8 @@ paths:
           $ref: '#/components/responses/ZoteroNotConnected'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '502':
+          $ref: '#/components/responses/ZoteroUnavailable'
 
   /api/translate:
     post:

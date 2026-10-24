@@ -28,7 +28,7 @@ export interface ZoteroDeps {
 // 연결하지 않은 사용자.
 export class ZoteroNotConnected extends Error {}
 
-async function apiFor(deps: ZoteroDeps, userId: string): Promise<ZoteroApi> {
+export async function apiFor(deps: ZoteroDeps, userId: string): Promise<ZoteroApi> {
 	const credentials = await getCredentials(deps.admin, userId, deps.encryptionSecret);
 	if (!credentials) throw new ZoteroNotConnected();
 	return { baseUrl: deps.apiBaseUrl, userId: credentials.zoteroUserId, apiKey: credentials.apiKey, fetch: deps.fetch };

@@ -11,6 +11,45 @@ export const PUBLIC_API_ROUTES: ReadonlySet<string> = new Set([
 	'POST /api/auth/login'
 ]);
 
+// 메모 저장만 큰 본문을 받는다(archi-studio-paper-notes 결정 4). 서버 전체 한도(BODY_SIZE_LIMIT)를 올려도
+// 나머지 /api 경로는 Node 어댑터 기본 한도와 같은 512 KB를 넘는 본문을 읽지 못하게 한다.
+export const DEFAULT_BODY_LIMIT = 512 * 1024;
+const LARGE_BODY_ROUTE = /^\/api\/papers\/[^/]+\/memo$/;
+
+// 한도를 넘는 순간 읽기가 실패하는 본문으로 바꾼다. 어댑터가 한도를 넘는 본문에 하는 것과 같다.
+export function limitBody(request: Request, limit: number): Request {
+	const source = request.body;
+	if (!source) return request;
+	const tooLarge = () => new Error('body too large');
+	const declared = Number(request.headers.get('content-length'));
+	let body: ReadableStream<Uint8Array>;
+	if (Number.isFinite(declared) && declared > limit) {
+		// 선언된 길이가 넘으면 원래 본문은 건드리지 않는다.
+		body = new ReadableStream({ start: (controller) => controller.error(tooLarge()) });
+	} else {
+		// 넘는 순간 읽기를 멈춘다. 원래 본문을 취소하면 연결이 끊겨 응답이 가지 않으므로 취소하지 않는다.
+		const reader = source.getReader();
+		let size = 0;
+		body = new ReadableStream({
+			async pull(controller) {
+				const { done, value } = await reader.read();
+				if (done) return controller.close();
+				size += value.byteLength;
+				if (size > limit) controller.error(tooLarge());
+				else controller.enqueue(value);
+			},
+			cancel: (reason) => reader.cancel(reason)
+		});
+	}
+	return new Request(request.url, {
+		method: request.method,
+		headers: request.headers,
+		signal: request.signal,
+		body,
+		duplex: 'half'
+	} as RequestInit);
+}
+
 export interface ApiGuardOptions {
 	verify: SessionVerifier;
 	publicRoutes?: ReadonlySet<string>;
@@ -42,6 +81,10 @@ export function createApiHandle({
 		const forbidden = csrfRejection(event, isApi);
 		if (forbidden) return forbidden;
 		if (!isApi) return resolve(event);
+
+		if (!(path !== null && event.request.method === 'PUT' && LARGE_BODY_ROUTE.test(path))) {
+			event.request = limitBody(event.request, DEFAULT_BODY_LIMIT);
+		}
 
 		try {
 			const isPublic = path !== null && publicRoutes.has(`${event.request.method} ${path}`);

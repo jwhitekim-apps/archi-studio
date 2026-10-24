@@ -18,6 +18,7 @@ import { POST as webpagePost } from '../../routes/api/papers/webpage/+server';
 import { DELETE as zoteroConnectionDelete } from '../../routes/api/zotero/connection/+server';
 import { POST as translatePost } from '../../routes/api/translate/+server';
 import { GET as translateHistoryGet } from '../../routes/api/translate/history/+server';
+import { GET as memoGet, PUT as memoPut } from '../../routes/api/papers/[id]/memo/+server';
 import { GET as analysisGet, POST as analysisPost } from '../../routes/api/papers/[id]/analysis/+server';
 
 export interface CookieOptions {
@@ -67,6 +68,8 @@ const paramRoutes: { method: string; pattern: RegExp; handler: Handler }[] = [
 	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)$/, handler: paperGet as unknown as Handler },
 	{ method: 'DELETE', pattern: /^\/api\/papers\/(?<id>[^/]+)$/, handler: paperDelete as unknown as Handler },
 	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)\/file$/, handler: paperFileGet as unknown as Handler },
+	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)\/memo$/, handler: memoGet as unknown as Handler },
+	{ method: 'PUT', pattern: /^\/api\/papers\/(?<id>[^/]+)\/memo$/, handler: memoPut as unknown as Handler },
 	{ method: 'POST', pattern: /^\/api\/papers\/(?<id>[^/]+)\/analysis$/, handler: analysisPost as unknown as Handler },
 	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)\/analysis$/, handler: analysisGet as unknown as Handler }
 ];
@@ -86,7 +89,7 @@ export class Browser {
 	}
 
 	// raw를 주면 body 대신 그 문자열을 그대로 보낸다(JSON이 아닌 본문 시험용).
-	async request(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, raw?: string): Promise<HarnessResponse> {
+	async request(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, raw?: string): Promise<HarnessResponse> {
 		const setCookies: SetCookie[] = [];
 		const deleted: string[] = [];
 		// 요청 안에서의 쿠키 읽기는 이 요청이 설정한 값을 먼저 보여 준다(SvelteKit과 같다).
