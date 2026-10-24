@@ -46,6 +46,7 @@ describe('LocalProvider', () => {
 			model: 'school-model',
 			max_tokens: 50,
 			stream: false,
+			reasoning_effort: 'none',
 			messages: [
 				{ role: 'system', content: '지시' },
 				{ role: 'user', content: '질문' }

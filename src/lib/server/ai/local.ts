@@ -54,6 +54,9 @@ export class LocalProvider extends BaseProvider {
 				model: req.model,
 				max_tokens: req.maxTokens,
 				stream,
+				// 학교 모델(qwen3)은 답 전에 생각을 길게 써서 출력 한도를 다 쓰고 빈 응답이나 잘린 JSON을 낸다(한 번에 70~85초).
+				// 학교 서버가 따르는 끄기 설정은 이것뿐이었다(enable_thinking, /no_think, "low"는 무시됨). 사용자 결정: 생각을 끈다.
+				reasoning_effort: 'none',
 				messages: [...(req.system.trim() ? [{ role: 'system', content: req.system }] : []), { role: 'user', content: req.user }]
 			}),
 			signal: req.signal
