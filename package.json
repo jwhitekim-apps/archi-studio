@@ -24,6 +24,7 @@
 		"@sveltejs/kit": "^2.70.3",
 		"@sveltejs/vite-plugin-svelte": "^6.2.4",
 		"@types/node": "^20.19.43",
+		"@types/turndown": "^5.0.6",
 		"playwright": "^1.64.1",
 		"supabase": "^2.121.0",
 		"svelte": "^5.57.1",
@@ -37,6 +38,8 @@
 		"@google/genai": "^2.31.0",
 		"@supabase/supabase-js": "^2.109.0",
 		"fflate": "^0.8.2",
-		"pdfjs-dist": "5.6.205"
+		"marked": "^18.1.1",
+		"pdfjs-dist": "5.6.205",
+		"turndown": "^7.2.4"
 	}
 }

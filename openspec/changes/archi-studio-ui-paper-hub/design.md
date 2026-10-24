@@ -16,7 +16,7 @@
 | `HtmlViewer.svelte` | 255 | 이식(`sandbox="allow-same-origin"` 유지) |
 | `MarkdownNote.svelte` | 596 | 이식 후 수정(오류 코드별 안내, 미리보기 안전 처리) |
 | `NoteBottomSheet.svelte` | 250 | 이식 후 수정(셸의 포커스 이동·복귀·`inert` 규칙에 맞춤) |
-| `PaperDetailSplit.svelte` | 150 | 새로 작성(라우트 `src/routes/papers/[id]/`) |
+| `PaperDetailSplit.svelte` | 150 | 새로 작성(라우트 `src/routes/(app)/papers/[id]/`) |
 | `touch-gestures.js` | 250 | 이식(TypeScript) |
 | `safari-polyfills.js`, `pdf-worker-entry.js` | 37, 5 | 이식(TypeScript) |
 | `pdf-highlight.js`, `pdf-ink.js` | 154, 116 | 제외 |
@@ -84,6 +84,14 @@ Playwright의 요청 가로채기로 `GET /api/papers/{id}`, `/file`, `/memo`, `
 ## Open Questions
 
 1. **번역·분석 화면이 받을 쿼리 이름**: 이 change는 `/translate?paperId={id}`, `/analyze?paperId={id}`로 링크한다. `archi-studio-ui-translate-analyze`가 같은 이름을 받아야 한다. 추천은 `paperId`로 통일하는 것이다.
-2. **오른쪽 설정 패널에 허브용 내용을 둘지**: 지금 패널은 빈 안내문이다. 추천은 허브에서는 비워 두고, 설정 내용은 `archi-studio-ui-translate-analyze`에서 정하는 것이다.
+2. **오른쪽 설정 패널에 허브용 내용을 둘지**: 지금 오른쪽 패널은 화면이 `PanelContent`로 내용을 넣는 패널 자리 구조다. 허브는 패널 자리에 내용을 넣지 않는다. 추천은 허브에서는 비워 두고, 설정 내용은 `archi-studio-ui-translate-analyze`에서 정하는 것이다.
 3. **Safari와 터치 기기 실측**: 서버에는 Chromium뿐이다. 추천은 구현 뒤 사용자가 자기 기기에서 한 번 확인하는 것이다.
 4. **한글 글꼴이 있는 환경에서의 화면 확인**: 서버에는 글꼴이 없다. 추천은 Docker 이미지에 글꼴을 넣어 검증하는 일을 `archi-studio-deploy-cutover`에서 다루는 것이다.
+
+## 현재 코드에 맞춘 보정 (2026-10-24)
+
+- 화면은 셸 묶음 `src/routes/(app)/papers/[id]`에 둔다. `AnalysisResult`의 `/papers/{id}` 링크와 주소가 같다.
+- 공통 도구를 다시 만들지 않는다: `apiFetch`·`ApiError`, `errorMessage`, `Button`·`Notice`·`StatePanel`·`Icon` 등 `$lib/components/ui`.
+- 원문은 `GET /api/papers/{id}/file`을 URL로 읽는다. 404 `attachment_not_found`는 "첨부 없음" 안내로 보인다.
+- 로그인 만료(401): 상세 조회는 기본(로그인 화면으로 이동)이고, 메모 저장은 입력을 지키려고 `redirectOn401: false`로 화면에 머물며 초안을 보관하고 로그인 링크를 보인다(번역·분석 화면과 같은 예외).
+- 메모 불러오기·저장의 실제 서버 확인은 `archi-studio-paper-notes`가 구현된 뒤에 한다. 그 전에는 가짜 응답으로 확인한다.

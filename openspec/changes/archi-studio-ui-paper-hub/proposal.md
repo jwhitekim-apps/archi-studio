@@ -32,7 +32,7 @@ Archi Studio가 "흩어진 도구를 하나의 앱으로 통합했다"는 말이
 ## Impact
 
 - 새 의존성: `pdfjs-dist`(PDF 그리기), `marked`(마크다운 미리보기). 미리보기 안전 처리용 라이브러리를 추가할지는 `design.md`의 열린 질문이다.
-- 새 파일: `src/routes/papers/[id]/` 아래 화면, `src/lib/components/` 아래 뷰어·메모 부품, `src/lib/utils/` 아래 터치 제스처와 호환 보강 코드.
+- 새 파일: `src/routes/(app)/papers/[id]/` 아래 화면, `src/lib/components/` 아래 뷰어·메모 부품, `src/lib/utils/` 아래 터치 제스처와 호환 보강 코드.
 - 바뀌는 설정: Vite의 웹 워커 형식(워커는 pdf.js가 PDF 해석을 맡기는 별도 스레드), 서버 렌더링을 끄는 범위.
 - 서버(`/api`)는 건드리지 않는다. 선행 change가 구현되기 전에도 이 change의 단계별 검증은 API 응답을 가짜로 대신해(Playwright 요청 가로채기) 진행한다. 실제 API와의 통합 확인은 선행 change가 구현된 뒤 한 번 더 한다.
 - 폴리오 코드는 JavaScript이고 새 앱은 TypeScript strict(엄격한 타입 검사)라서 타입을 어디까지 붙일지는 `design.md`에서 정한다.
