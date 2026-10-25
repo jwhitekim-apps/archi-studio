@@ -1,6 +1,6 @@
 # Based on veloo.2joon.com/.github/workflows/deploy.yml.
 # Reused: SSH setup with secrets SSH_PRIVATE_KEY, SSH_HOST, SSH_PORT, SSH_USER.
-# Reused: remote run via `wsl.exe -- bash -s`.
+# Changed: remote run with `bash -s` directly on a Linux host.
 # Reused: `git fetch` + `git reset --hard` to origin/main.
 # Reused: `concurrency` group so only one deploy runs at a time.
 # Reused: `docker compose up -d --build` then `docker compose ps`.
@@ -16,7 +16,8 @@ permissions:
   contents: read
 
 env:
-  DEPLOY_DIR: /mnt/c/Users/admin/joonspace/archi-studio
+  # Literal $HOME is expanded on the remote host.
+  DEPLOY_DIR: $HOME/workspace/archi-studio
 
 concurrency:
   group: archi-studio-production
@@ -78,7 +79,7 @@ jobs:
             -i ~/.ssh/archi_deploy \
             -p "$SSH_PORT" \
             "$SSH_USER@$SSH_HOST" \
-            'wsl.exe -- bash -s' <<REMOTE_SCRIPT
+            'bash -s' <<REMOTE_SCRIPT
           set -euo pipefail
           cd "$DEPLOY_DIR"
           git fetch origin main

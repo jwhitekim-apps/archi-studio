@@ -2,7 +2,7 @@
 
 ## Context
 
-- **지금의 배포 방식(벨루와 폴리오 모두 같은 모양)**: `main`에 푸시하면 GitHub Actions가 SSH로 운영 호스트에 들어가 `wsl.exe -- bash -s`로 WSL(Windows 안의 리눅스) 셸을 열고, 저장소 폴더(`/mnt/c/Users/admin/joonspace/<저장소>`)에서 `git fetch`, `git reset --hard origin/main`, `docker compose up -d --build`를 실행한다. 벨루는 포트 9000, 폴리오는 3002를 쓴다. 외부 접속은 nginx와 Cloudflare Tunnel(회사 밖에서 내부 서버로 들어오는 터널)을 거친다고 문서에 적혀 있다. 그런데 벨루 저장소에는 다른 방식의 스크립트도 있다. `scripts/setup-nginx-https.sh`는 WSL 안에 Nginx와 certbot(webroot 방식 인증서 발급)을 설치하고, `scripts/wsl-http-portproxy.ps1`은 Windows에서 80/443을 WSL IP로 전달한다(수신 IP `192.168.219.105` 고정). 실제로 어느 쪽이 쓰이는지는 확인하지 못했다.
+- **지금의 배포 방식(벨루와 폴리오 모두 같은 모양)**: `main`에 푸시하면 GitHub Actions가 SSH로 운영 호스트(이 리눅스 서버)에 들어가 저장소 폴더(`~/workspace/<저장소>`)에서 `git fetch`, `git reset --hard origin/main`, `docker compose up -d --build`를 실행한다. 벨루(`~/workspace/veloo.2joon.com`)는 포트 9000, 폴리오(`~/workspace/zotero-folio`)는 3002를 쓰고, 새 앱(`~/workspace/archi-studio`)은 8000을 쓴다. 이 호스트에서 nginx가 80/443으로 동작 중이고 cloudflared(Cloudflare Tunnel)는 꺼져 있음을 확인했다. 그래서 외부 접속은 `scripts/setup-nginx-https.sh`(Nginx와 certbot webroot 방식 인증서 발급)로 한다. 벨루의 Windows용 포트 전달 스크립트는 필요 없어 쓰지 않는다.
 - **새 앱**: SvelteKit + `adapter-node`(`npm run build` 후 `node build`로 실행). `svelte.config.js`가 이미 `@sveltejs/adapter-node`(package.json `^5.5.7`)를 쓴다. `Dockerfile`은 아직 없다. 필요한 환경 변수는 Supabase(`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`), Zotero OAuth 값, `LOCAL_LLM_*`, `S2_API_KEY`, `AI_PROVIDER=local`이다. 학교 LLM 서버 인증서를 믿게 하려면 `NODE_EXTRA_CA_CERTS`가, 1MB 메모를 받으려면 `BODY_SIZE_LIMIT=4M`이 필요하다(adapter-node 기본은 512KB). `PORT`와 `ORIGIN`(앱이 자기 주소를 아는 값)도 필요하다. 외부 사이트 요청(CSRF) 검사가 요청의 `Origin`을 앱 주소와 비교하므로, 프록시 뒤에서는 `ORIGIN`을 공개 주소로 정확히 맞춰야 정상 요청이 거부되지 않는다.
 - **DB**: 로컬에서 만든 마이그레이션 6개(`supabase/migrations/`)와 적용·롤백 순서(`docs/api/data-model.md` 6~7절)가 이미 있다. 운영에 어떤 테이블이 실제로 있는지는 아직 조회하지 못했다.
 - **벨루 사용자**: `users`에 `username`, `password_hash`(bcrypt), `is_approved`가 있고 `email`은 나중에 추가된 선택 열이다. 새 로그인은 이메일과 비밀번호이므로 이메일이 없는 사용자는 그대로 옮길 수 없다.
@@ -24,10 +24,10 @@
 ## Decisions
 
 **1. 배포 방식은 벨루의 것을 재사용하되 자동 실행을 끈다.**
-재사용: GitHub Actions의 SSH 접속(시크릿 이름 `SSH_PRIVATE_KEY`, `SSH_HOST`/`SERVER_HOST`, `SSH_PORT`, `SSH_USER`/`SERVER_USER`), `wsl.exe -- bash -s`, `concurrency`, `docker compose up -d --build`, compose의 `env_file`, `init`, `restart: unless-stopped`. 바꿈: 저장소 폴더, 이미지 이름(`archi-studio:local`), `concurrency` 그룹 이름, 배포 전 `npm run check`와 `npm test`, 트리거를 `workflow_dispatch`(수동 실행)로 둔다. 대안인 "푸시마다 자동 배포"(벨루 방식)는 운영 DB를 공유하는 지금 시점에 위험해서 버렸다. 비밀값은 복사하지 않고 시크릿 이름만 쓴다.
+재사용: GitHub Actions의 SSH 접속(시크릿 이름 `SSH_PRIVATE_KEY`, `SSH_HOST`/`SERVER_HOST`, `SSH_PORT`, `SSH_USER`/`SERVER_USER`), `concurrency`, `docker compose up -d --build`, compose의 `env_file`, `init`, `restart: unless-stopped`. 바꿈: `wsl.exe -- bash -s` 단계를 빼고 리눅스 호스트에서 바로 실행, 저장소 폴더(`~/workspace/archi-studio`), 이미지 이름(`archi-studio:local`), `concurrency` 그룹 이름, 배포 전 `npm run check`와 `npm test`, 트리거를 `workflow_dispatch`(수동 실행)로 둔다. 대안인 "푸시마다 자동 배포"(벨루 방식)는 운영 DB를 공유하는 지금 시점에 위험해서 버렸다. 비밀값은 복사하지 않고 시크릿 이름만 쓴다.
 
 **1a. 호스트 스크립트 두 개를 복사해 매개변수화한다.**
-`scripts/setup-nginx-https.sh`는 `<domain> <email>` 인자와 `APP_PORT`를 받되 기본값을 8000으로 바꾸고, 벨루 이름이 든 문구·예시만 바꾼다. `scripts/wsl-http-portproxy.ps1`은 고정 IP를 `-ListenAddress` 매개변수(필수)로, 방화벽 규칙 이름 접두어를 `-RuleName`(기본 `Archi Studio`)으로 바꾼다. 포트 9000은 벨루가 쓰고 있으므로 병행 기간에는 새 앱에 다른 포트가 필요하다(열린 질문 6).
+`scripts/setup-nginx-https.sh`는 `<domain> <email>` 인자와 `APP_PORT`를 받되 기본값을 8000으로 바꾸고, 벨루 이름이 든 문구·예시만 바꾼다. 포트 9000은 벨루가 쓰고 있으므로 병행 기간에는 새 앱에 다른 포트가 필요하다(열린 질문 6).
 
 **1b. Dockerfile은 Node 20 멀티스테이지로 만든다.**
 빌드 단계에서 `npm ci`와 `npm run build`, 런타임 단계에서 `node build`. 학교 모델 인증서는 이미지에 넣지 않고 compose에서 읽기 전용으로 마운트하며 `NODE_EXTRA_CA_CERTS`가 그 경로를 가리킨다. `BODY_SIZE_LIMIT=4M`은 compose `environment`에 고정한다. `.env`에는 Anthropic·Gemini 키를 두지 않고 `AI_PROVIDER=local`로 학교 LLM만 쓴다.
@@ -51,7 +51,7 @@
 - [새 앱 컨테이너가 공유 DB를 과도하게 사용해 기존 서비스가 느려짐] → 병행 운영 기간에 기존 서비스 로그의 오류와 연결 수를 점검한다.
 - [`ORIGIN` 값이 틀려서 모든 쓰기 요청이 403 `forbidden_origin`으로 거부됨] → 첫 배포 직후 가입·로그인 요청으로 확인하고 문서에 증상과 원인을 적는다.
 - [이관 후 비밀번호 로그인이 안 됨(해시 호환 실패)] → 이관 전에 로컬 리허설로 확인하고, 안 되면 방식 B로 바꾼다. 이관된 계정은 표식으로 일괄 삭제할 수 있다.
-- [네임서버 불일치로 터널이 동작하지 않음] → 첫 배포 전에 호스트에서 `cloudflared`와 nginx 상태를 확인한다(운영 호스트 접속은 사용자 확인 후).
+- [네임서버 불일치로 터널이 동작하지 않음] → 첫 배포 전에 호스트의 nginx 설정과 인증서 상태를 확인한다(cloudflared는 꺼져 있어 터널은 쓰지 않는다).
 - [학교 LLM 인증서 경로가 틀려 AI 요청이 TLS 오류로 실패함] → 첫 배포 전 컨테이너 안에서 학교 LLM 주소로 요청을 한 번 보내 확인한다.
 - [`BODY_SIZE_LIMIT`가 빠져 큰 메모 저장이 413으로 실패함] → 수동 점검에서 1MB에 가까운 메모를 저장해 본다.
 - [종료한 구 서비스를 되살려야 함] → 서비스는 `docker compose stop`으로 멈출 뿐 삭제하지 않고, 되살리는 명령은 `docker compose start`다.
@@ -67,10 +67,10 @@
 
 1. **구 서비스 종료 시점**: 11/24 이후 언제 중지할까요? 추천은 발표 후 2주 동안 병행 운영하다가 중지하는 것입니다. 발표 직전 장애 위험을 줄이고, 되살리는 비용이 작습니다.
 2. **벨루 사용자 이관 방식**(TODO 5절 5번): 추천은 로컬 리허설에서 해시 호환이 확인되면 방식 A를 쓰고, 안 되면 방식 B로 가는 것입니다. 이메일이 없는 사용자는 수를 확인한 뒤 개별로 이메일을 받습니다.
-3. **공개 주소와 배포 위치**(TODO 5절 6번): 새 앱 주소, 그리고 운영 호스트가 Windows의 WSL이 맞는지 확인이 필요합니다. 추천은 기존 `veloo.2joon.com` 주소를 새 앱이 이어받는 것입니다. 사용자가 주소를 바꾸지 않아도 됩니다. 폴리오 주소는 아직 확인하지 못했습니다.
+3. **공개 주소와 배포 위치**(TODO 5절 6번): 새 앱 주소가 필요합니다. 배포 위치는 이 리눅스 서버로 확인했습니다. 추천은 기존 `veloo.2joon.com` 주소를 새 앱이 이어받는 것입니다. 사용자가 주소를 바꾸지 않아도 됩니다. 폴리오 주소는 아직 확인하지 못했습니다.
 4. **한도 초과 시 대응**(TODO 5절 7번): 추천은 70%를 넘으면 적용을 멈추고, 오래된 이력 정리를 먼저 시도한 뒤 안 되면 요금제 상향을 사용자에게 묻는 것입니다.
 5. **병행 기간의 DB 공유**: 기존 벨루·폴리오와 새 앱이 같은 Supabase 프로젝트를 쓴다. 추천은 새 앱이 기존 테이블에 쓰지 않는다는 것을 병행 점검 task에서 확인하는 것입니다.
 6. **병행 기간 새 앱 포트** (결정, 2026-10-24): 새 앱은 8000번 포트로 띄운다(`PORT=8000`, `APP_PORT=8000`). 벨루는 9000을 계속 쓴다. 구 서비스 중지 때 Nginx 설정만 바꾼다.
-7. **외부 접속 방식**: Cloudflare Tunnel과 Nginx+certbot+포트 전달 중 무엇을 쓸까요? 추천은 호스트 점검(1.2) 결과 벨루가 지금 쓰는 방식을 그대로 따르는 것입니다.
+7. **외부 접속 방식**(결정함): Nginx+certbot(`scripts/setup-nginx-https.sh`)을 씁니다. 이 호스트에서 nginx가 80/443으로 동작 중이고 cloudflared는 꺼져 있음을 확인했습니다.
 8. **배포 트리거**: 벨루처럼 `main` 푸시 자동 배포로 갈까요? 추천은 구 서비스 중지 전까지 수동 실행만 두는 것입니다.
 9. **학교 인증서 파일의 호스트 위치**: 마운트할 경로를 정해야 합니다. 추천은 저장소 밖(예: `/etc/archi-studio/school-ca.pem`)에 두고 `.env`의 경로 변수로 받는 것입니다.
