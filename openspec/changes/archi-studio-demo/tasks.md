@@ -4,20 +4,20 @@
 
 ## 1. 증거 표와 대본
 
-- [ ] 1.1 `docs/demo/evidence-checklist.md`에 "통합했다"는 주장 최소 6개(로그인 하나, 논문 데이터 하나, 디자인 하나, 메뉴 하나, AI 사용 원칙 하나, 앱 하나)를 `번호 / 주장 / 화면에서 확인하는 방법 / 확인 결과` 표로 쓰고, 확인 결과 칸은 비워 둔다. `grep -c '^| ' docs/demo/evidence-checklist.md`가 헤더를 빼고 6행 이상이며 모든 행의 "확인하는 방법" 칸이 비어 있지 않은지 눈으로 확인한다
-- [ ] 1.2 `docs/demo/script.md`에 장면 1(흩어진 모습), 장면 2(통합된 한 흐름), 장면 3(통합의 근거)를 각각 화면 순서, 할 말, 예상 소요 시간으로 쓰고, 증거 표의 모든 번호가 장면 2나 3에서 한 번 이상 인용되는지 `grep`으로 번호별로 확인한다
+- [x] 1.1 `docs/demo/evidence-checklist.md`에 "통합했다"는 주장 최소 6개(로그인 하나, 논문 데이터 하나, 디자인 하나, 메뉴 하나, AI 사용 원칙 하나, 앱 하나)를 `번호 / 주장 / 화면에서 확인하는 방법 / 확인 결과` 표로 쓰고, 확인 결과 칸은 비워 둔다. `grep -c '^| ' docs/demo/evidence-checklist.md`가 헤더를 빼고 6행 이상이며 모든 행의 "확인하는 방법" 칸이 비어 있지 않은지 눈으로 확인한다
+- [x] 1.2 `docs/demo/script.md`에 장면 1(흩어진 모습), 장면 2(통합된 한 흐름), 장면 3(통합의 근거)를 각각 화면 순서, 할 말, 예상 소요 시간으로 쓰고, 증거 표의 모든 번호가 장면 2나 3에서 한 번 이상 인용되는지 `grep`으로 번호별로 확인한다
 - [ ] 1.3 대본 장면 1의 캡처 3장(기존 벨루, 폴리오, 비서의 로그인 또는 첫 화면)을 `docs/demo/assets/`에 저장하고 파일 이름을 대본에 적는다. 비밀값이나 개인 정보가 화면에 없는지 이미지를 직접 열어 확인한다
 
 ## 2. 시험용 데이터와 계정
 
 - [ ] 2.1 데모 전용 Zotero 계정에 공개 열람 가능한 논문 3~5편을 넣고, `docs/demo/seed-data.md`에 논문 제목, 출처 주소, PDF 열람 가능 여부를 표로 적는다. 표의 모든 주소가 브라우저로 열리는지 확인한다(선행: `archi-studio-zotero-connection`)
-- [ ] 2.2 같은 논문을 `papers` 테이블에 직접 넣는 `scripts/demo-seed.sql`을 만들고, 로컬 DB(`npm run db:start`, `npm run db:reset`)에 적용한 뒤 `select count(*) from public.papers`가 논문 수와 같은지 SQL로 확인한다(선행: `archi-studio-papers`)
+- [x] 2.2 같은 논문을 `papers` 테이블에 직접 넣는 `scripts/demo-seed.sql`을 만들고, 로컬 DB(`npm run db:start`, `npm run db:reset`)에 적용한 뒤 `select count(*) from public.papers`가 논문 수와 같은지 SQL로 확인한다(선행: `archi-studio-papers`)
 - [ ] 2.3 `seed-data.md`에 데모 계정(이름은 `demo-` 접두사) 준비 절차를 적는다. 가입 → SQL로 `archi_profiles.approved = true` → 로그인까지 로컬에서 따라 해서 `POST /api/auth/login`이 200이고 `GET /api/auth/me`가 계정 정보를 돌려주는지 확인하고, 발표 후 삭제하는 SQL도 함께 적어 로컬에서 실행해 행이 모두 지워지는지 확인한다
 - [ ] 2.4 데모 계정으로 번역(문장 3개 이상), 분석(논문 1편 이상), 브리핑(비서의 저장 기능이 끝난 뒤 1건 이상)을 미리 한 번씩 실행해 결과를 남기고, `GET /api/translate/history`와 분석 조회 API, `GET /api/briefings`가 각각 1건 이상을 돌려주는지 `curl`로 확인해 결과 개수를 `seed-data.md`에 적는다(선행: `archi-studio-translation`, `archi-studio-paper-analysis`, `archi-studio-briefing`, `briefing-store`)
 
 ## 3. 예비 영상
 
-- [ ] 3.1 `docs/demo/backup-video.md`에 장면별 컷 목록(장면 1~3, 각 1~2분), 녹화 도구와 해상도, 파일 이름 규칙(`demo-s1.mp4` 등), 보관 위치 두 곳(발표 노트북 로컬 디스크와 USB)을 적고, 컷 목록이 대본의 장면과 일대일로 대응하는지 대조한다
+- [x] 3.1 `docs/demo/backup-video.md`에 장면별 컷 목록(장면 1~3, 각 1~2분), 녹화 도구와 해상도, 파일 이름 규칙(`demo-s1.mp4` 등), 보관 위치 두 곳(발표 노트북 로컬 디스크와 USB)을 적고, 컷 목록이 대본의 장면과 일대일로 대응하는지 대조한다
 - [ ] 3.2 기능 동결 이후 실제 환경에서 전체 흐름을 한 번 녹화해 장면별로 자르고, 두 보관 위치의 파일 `sha256sum`이 같고 각 파일이 끝까지 재생되는지 확인해 `backup-video.md`에 파일 크기와 재생 시간을 적는다(선행: 모든 기능 change와 `archi-studio-deploy-cutover`)
 
 ## 4. 발표 장소와 환경
@@ -28,7 +28,7 @@
 
 ## 5. 리허설
 
-- [ ] 5.1 `docs/demo/rehearsal-checklist.md`에 정상 리허설 절차(대본대로 처음부터 끝까지, 소요 시간 측정)와 실패 주입 절차(인터넷 끊기, 학교 LLM 차단, 분석 예비안 사용)를 쓰고, 실패 주입 방법이 실제 명령이나 조작으로 적혀 있는지(예: 집 서버에서 학교 LLM 주소를 막는 방법과 되돌리는 방법) 확인한다
+- [x] 5.1 `docs/demo/rehearsal-checklist.md`에 정상 리허설 절차(대본대로 처음부터 끝까지, 소요 시간 측정)와 실패 주입 절차(인터넷 끊기, 학교 LLM 차단, 분석 예비안 사용)를 쓰고, 실패 주입 방법이 실제 명령이나 조작으로 적혀 있는지(예: 집 서버에서 학교 LLM 주소를 막는 방법과 되돌리는 방법) 확인한다
 - [ ] 5.2 기능 동결 이후 정상 리허설을 한 번 실행해 날짜, 총 소요 시간, 막힌 곳을 `rehearsal-checklist.md`에 쓰고, 증거 표의 확인 결과 칸을 통과/실패/예비안으로 모두 채운다. 빈 칸이 0개인지 확인한다
 - [ ] 5.3 실패 주입 리허설을 한 번 실행해 인터넷 끊김과 학교 LLM 차단 각각에서 예비 영상 또는 미리 만든 결과로 발표가 이어지는지 확인하고 결과를 기록한다. 대체 경로가 실패한 경우 대본 또는 영상을 고치고 이 task를 다시 실행한다
 
