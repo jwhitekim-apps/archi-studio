@@ -36,6 +36,11 @@ export function paperNotFound(): Response {
 	return errorResponse(404, 'paper_not_found', '논문을 찾을 수 없습니다.');
 }
 
+// 없는 브리핑, 남의 브리핑, UUID가 아닌 id를 구분하지 않는다.
+export function briefingNotFound(): Response {
+	return errorResponse(404, 'briefing_not_found', '브리핑을 찾을 수 없습니다.');
+}
+
 export function payloadTooLarge(message = '요청 본문이 너무 큽니다.'): Response {
 	return errorResponse(413, 'payload_too_large', message);
 }
