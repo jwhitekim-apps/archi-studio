@@ -25,6 +25,7 @@
 
 - [x] 4.1 메인 스펙 `paper-notes`의 시나리오 7개(처음 6개로 잘못 셌다)와 통합 테스트 이름을 짝지은 표를 `docs/dev/paper-notes-test-map.md`에 만들고 7개 모두 연결됐는지 `grep`으로 대조한다
 - [ ] 4.2 `docs/dev/setup.md`에 메모 시험 방법(가짜 Zotero로 단위 테스트, 통합 테스트 실행 명령, 실제 Zotero 계정으로 손으로 확인하는 절차)을 적는다. 실제 Zotero 계정을 쓰는 확인(저장한 메모가 Zotero 앱에서 태그 `zotero-insight:memo`가 붙은 자식 노트로 보이는지)은 사용자가 직접 하는 항목으로 표시한다
+  - 메모: `archi-studio-deploy-cutover`의 첫 배포 전 실제 Zotero 수동 점검(2.7)으로 옮겼다.
 - [x] 4.3 `npm run check`, `npm test`, `npm run test:auth`(또는 통합 테스트 명령), `npm run build`, `npm run check:tokens`, `openspec validate archi-studio-paper-notes --strict`, `openspec validate --specs --strict`가 모두 통과하는지 확인하고 끝나면 `npm run db:stop`으로 로컬 DB를 내린다
 
 ## Workflow follow-up

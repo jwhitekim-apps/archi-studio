@@ -1730,6 +1730,25 @@ async function hubMemo() {
 		await page.emulateMedia({ colorScheme: scheme });
 		await page.getByTestId('memo-pane').screenshot({ path: `${outDir}/${scheme}-hub-memo-1280.png` });
 	}
+	// 390px: 시트를 펼쳐 같은 미리보기를 찍는다
+	await page.emulateMedia({ colorScheme: 'light' });
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.waitForTimeout(300);
+	const sheetHandle = page.getByRole('button', { name: '메모 펼치기' });
+	if (await sheetHandle.count()) await sheetHandle.click();
+	await page.waitForTimeout(300);
+	if (!(await preview.isVisible())) await page.getByRole('button', { name: '미리보기' }).click();
+	await preview.waitFor();
+	const overflow = await page.evaluate(() => ({
+		page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+		preview: (() => { const el = document.querySelector('[data-testid="memo-preview"]'); return el.scrollWidth - el.clientWidth; })()
+	}));
+	report(overflow.page <= 0 && overflow.preview <= 0, `${tag} 390px 미리보기 가로 넘침 없음 (페이지 ${overflow.page}, 미리보기 ${overflow.preview})`);
+	for (const scheme of ['light', 'dark']) {
+		await page.emulateMedia({ colorScheme: scheme });
+		await page.waitForTimeout(200);
+		await page.getByTestId('memo-pane').screenshot({ path: `${outDir}/${scheme}-hub-memo-390.png` });
+	}
 	await context.close();
 }
 
