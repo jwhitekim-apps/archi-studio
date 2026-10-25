@@ -11,7 +11,7 @@ function fail(message) {
 
 const { SUPABASE_URL = '', SUPABASE_SERVICE_ROLE_KEY = '', SEED_PASSWORD = '' } = process.env;
 const SEED_EMAIL = process.env.SEED_EMAIL ?? 'briefing-seed@example.com';
-const EMPTY_EMAIL = 'briefing-empty@example.com';
+const EMPTY_EMAIL = process.env.SEED_EMPTY_EMAIL ?? 'briefing-empty@example.com';
 
 let host = '';
 try {

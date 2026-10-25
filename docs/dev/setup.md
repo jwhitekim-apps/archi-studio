@@ -187,6 +187,7 @@ node scripts/seed-briefings.mjs
 ```
 
 - `briefing-seed@example.com`(승인됨)에 브리핑 38건: 평범한 35건, `<script>alert(1)</script>`가 든 1건, 공백 없는 120자 주소가 든 1건, 시험용 논문 2편을 언급한 1건. 빈 계정 `briefing-empty@example.com`에는 0건.
+- 계정 이름은 `SEED_EMAIL`, `SEED_EMPTY_EMAIL`로 바꿀 수 있다. 화면 검사 계정 규칙에 맞추려면 `ui-check-seed@example.com`, `ui-check-empty@example.com`을 쓰고 끝나면 지운다.
 - 같은 비밀번호로 두 계정에 로그인해 `/log`를 연다. 화면 검사는 위 `briefing` 묶음(`node scripts/ui-screens.mjs <주소> <폴더> briefing`)으로 한다.
 
 ## 인증 테스트 실행
