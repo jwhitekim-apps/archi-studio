@@ -20,6 +20,8 @@ import { POST as translatePost } from '../../routes/api/translate/+server';
 import { GET as translateHistoryGet } from '../../routes/api/translate/history/+server';
 import { GET as memoGet, PUT as memoPut } from '../../routes/api/papers/[id]/memo/+server';
 import { GET as analysisGet, POST as analysisPost } from '../../routes/api/papers/[id]/analysis/+server';
+import { GET as briefingsGet } from '../../routes/api/briefings/+server';
+import { GET as briefingGet } from '../../routes/api/briefings/[id]/+server';
 
 export interface CookieOptions {
 	path?: string;
@@ -60,7 +62,8 @@ const routes: Record<string, Handler> = {
 	'POST /api/zotero/sync': zoteroSyncPost as unknown as Handler,
 	'DELETE /api/zotero/connection': zoteroConnectionDelete as unknown as Handler,
 	'POST /api/translate': translatePost as unknown as Handler,
-	'GET /api/translate/history': translateHistoryGet as unknown as Handler
+	'GET /api/translate/history': translateHistoryGet as unknown as Handler,
+	'GET /api/briefings': briefingsGet as unknown as Handler
 };
 
 // 경로 매개변수가 있는 라우트. 이름 있는 그룹이 event.params가 된다.
@@ -71,7 +74,8 @@ const paramRoutes: { method: string; pattern: RegExp; handler: Handler }[] = [
 	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)\/memo$/, handler: memoGet as unknown as Handler },
 	{ method: 'PUT', pattern: /^\/api\/papers\/(?<id>[^/]+)\/memo$/, handler: memoPut as unknown as Handler },
 	{ method: 'POST', pattern: /^\/api\/papers\/(?<id>[^/]+)\/analysis$/, handler: analysisPost as unknown as Handler },
-	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)\/analysis$/, handler: analysisGet as unknown as Handler }
+	{ method: 'GET', pattern: /^\/api\/papers\/(?<id>[^/]+)\/analysis$/, handler: analysisGet as unknown as Handler },
+	{ method: 'GET', pattern: /^\/api\/briefings\/(?<id>[^/]+)$/, handler: briefingGet as unknown as Handler }
 ];
 
 const handle = createApiHandle({ verify: verifySession });
@@ -89,7 +93,7 @@ export class Browser {
 	}
 
 	// raw를 주면 body 대신 그 문자열을 그대로 보낸다(JSON이 아닌 본문 시험용).
-	async request(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, raw?: string): Promise<HarnessResponse> {
+	async request(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown, raw?: string): Promise<HarnessResponse> {
 		const setCookies: SetCookie[] = [];
 		const deleted: string[] = [];
 		// 요청 안에서의 쿠키 읽기는 이 요청이 설정한 값을 먼저 보여 준다(SvelteKit과 같다).
@@ -124,6 +128,12 @@ export class Browser {
 				const m = r.method === method ? r.pattern.exec(url.pathname) : null;
 				if (m) return r.handler({ ...(e as object), params: m.groups ?? {} } as never);
 			}
+			// 경로는 있는데 메서드가 없으면 SvelteKit처럼 405와 Allow를 돌려준다.
+			const allow = [
+				...Object.keys(routes).filter((k) => k.endsWith(` ${url.pathname}`)).map((k) => k.split(' ')[0]),
+				...paramRoutes.filter((r) => r.pattern.test(url.pathname)).map((r) => r.method)
+			];
+			if (allow.length) return new Response('method not allowed', { status: 405, headers: { allow: [...new Set(allow)].join(', ') } });
 			return new Response('not found', { status: 404 });
 		};
 		const res = await handle({ event, resolve } as never);
