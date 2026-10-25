@@ -1,0 +1,88 @@
+# Based on veloo.2joon.com/.github/workflows/deploy.yml.
+# Reused: SSH setup with secrets SSH_PRIVATE_KEY, SSH_HOST, SSH_PORT, SSH_USER.
+# Reused: remote run via `wsl.exe -- bash -s`.
+# Reused: `git fetch` + `git reset --hard` to origin/main.
+# Reused: `concurrency` group so only one deploy runs at a time.
+# Reused: `docker compose up -d --build` then `docker compose ps`.
+# Changed: repo folder on the host (DEPLOY_DIR below).
+# Changed: `npm run check` and `npm test` run before deploying.
+# Changed: trigger is workflow_dispatch only (manual run).
+name: Deploy Archi Studio
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DEPLOY_DIR: /mnt/c/Users/admin/joonspace/archi-studio
+
+concurrency:
+  group: archi-studio-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          set -euo pipefail
+
+          : "${SSH_PRIVATE_KEY:?GitHub secret SSH_PRIVATE_KEY is not set}"
+          : "${SSH_HOST:?GitHub secret SSH_HOST is not set}"
+          : "${SSH_PORT:?GitHub secret SSH_PORT is not set}"
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/archi_deploy
+          chmod 600 ~/.ssh/archi_deploy
+
+          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -euo pipefail
+
+          : "${SSH_USER:?GitHub secret SSH_USER is not set}"
+
+          ssh \
+            -i ~/.ssh/archi_deploy \
+            -p "$SSH_PORT" \
+            "$SSH_USER@$SSH_HOST" \
+            'wsl.exe -- bash -s' <<REMOTE_SCRIPT
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          git fetch origin main
+          git reset --hard origin/main
+          docker compose up -d --build
+          docker compose ps
+          REMOTE_SCRIPT
