@@ -152,6 +152,7 @@ kill %1
 | `hub-memo` | 허브 메모: 불러오기, 0.9초 뒤 PUT 1번, 409·413·네트워크·401 안내와 입력 유지, 초안 보관·복원·삭제, 200줄 메모 줄바꿈, 미리보기의 HTML 이스케이프(가짜 응답) | 필요 |
 | `hub-a11y` | 허브 접근성: 시트 포커스 이동·복귀(Escape·배경·닫기 버튼), 열린 동안 배경 inert, 버튼 이름, 구분선 화살표 조절, 새 글자색 대비(가짜 응답) | 필요 |
 | `hub-viewer` | 허브 원문 뷰어: 3쪽 PDF(`page.pdf()`로 생성)가 첫 쪽부터, 폭 맞춤 가로 스크롤 0, 확대 버튼 배율 증가, 확대 전후 기준 표시 위치 2px 이하, 드래그 선택 문자열, HTML 첨부 sandbox와 스크립트 미실행, 첨부 없음 안내(가짜 응답) | 필요 |
+| `briefing` | 브리핑 목록·상세(`/log`, `/log/{id}`): 30건과 더 보기(중복 없음), 빈·오류·불러오는 중 상태, 더 보기 401 안내, 본문 태그 글자 그대로, 논문 링크 `href`, 없는 id, 패널 접힘과 메뉴 현재 위치, 쓰기 버튼 없음, Tab 도달, 1280·390px × 라이트·다크 스크린샷과 가로 넘침, 로그아웃 상태 이동(가짜 응답) | 필요 |
 
 ```bash
 export LD_LIBRARY_PATH="$HOME/.cache/archi-chromelibs/root/usr/lib/x86_64-linux-gnu"
@@ -170,6 +171,23 @@ npm run db:stop
 - `translate` 묶음은 실제 AI를 부르지 않는다. 브라우저의 `fetch`를 `/api/translate`에 한해 감싸 시간차 조각, 한글 바이트 분할, 중간 끊김, 상태 코드별 오류를 흉내 낸다(`installFakeTranslate`).
 - 허브 묶음의 메모 API(`/api/papers/{id}/memo`)는 서버 구현 전이라 가짜 응답으로만 확인한다. 네트워크 실패는 `mockApi` 처리기가 `{ abort: true }`를 돌려 흉내 낸다.
 - 스크린샷은 두 번째 인자 폴더에 `light|dark-<화면>-<폭>.png`, `library-list.png`, `settings-confirm.png` 등으로 저장된다.
+
+## 브리핑 시험 데이터 (scripts/seed-briefings.mjs)
+
+실제 브리핑 API로 `/log` 화면을 볼 때 쓴다. 로컬 DB에만 넣고, `SUPABASE_URL`이 `127.0.0.1`·`localhost`가 아니면 아무것도 쓰지 않고 종료 코드 1로 끝난다.
+내용은 모두 자리표시 글이다. 같은 계정의 브리핑을 지우고 다시 넣으므로 여러 번 실행해도 건수가 같다.
+
+```bash
+npm run db:start
+# 키는 화면에 찍지 않고 환경 변수로만 넘긴다
+export SUPABASE_URL=http://127.0.0.1:54321
+export SUPABASE_SERVICE_ROLE_KEY="$(npx supabase status -o env | sed -n 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/p')"
+export SEED_PASSWORD='<시험 계정 비밀번호, 8자 이상>'
+node scripts/seed-briefings.mjs
+```
+
+- `briefing-seed@example.com`(승인됨)에 브리핑 38건: 평범한 35건, `<script>alert(1)</script>`가 든 1건, 공백 없는 120자 주소가 든 1건, 시험용 논문 2편을 언급한 1건. 빈 계정 `briefing-empty@example.com`에는 0건.
+- 같은 비밀번호로 두 계정에 로그인해 `/log`를 연다. 화면 검사는 위 `briefing` 묶음(`node scripts/ui-screens.mjs <주소> <폴더> briefing`)으로 한다.
 
 ## 인증 테스트 실행
 

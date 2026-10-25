@@ -13,7 +13,7 @@ export const NAV_ITEMS: NavEntry[] = [
 	{ label: '번역', href: '/translate', icon: 'file' },
 	{ label: '분석', href: '/analyze', icon: 'search' },
 	{ label: '메모', icon: 'note', disabled: true },
-	{ label: '브리핑', icon: 'external', disabled: true }
+	{ label: '브리핑', href: '/log', icon: 'external' }
 ];
 
 // 현재 주소가 메뉴 항목의 화면(또는 그 아래 화면)인지

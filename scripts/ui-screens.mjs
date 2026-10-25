@@ -4,7 +4,8 @@
 // library(서재, 가짜 응답), settings(설정, 가짜 응답), layout(화면 크기·테마별 배치),
 // library-real(로컬 DB에 SQL로 넣은 논문으로 실제 서버의 목록·검색·컬렉션·더 보기),
 // translate(번역 화면, 브라우저 안 가짜 스트림), analyze(분석 화면, 가짜 응답),
-// hub-frame·hub-memo·hub-a11y·hub-viewer(논문 허브의 틀·메모·접근성·원문 뷰어, 가짜 응답). 아무것도 주지 않으면 모두 돈다.
+// hub-frame·hub-memo·hub-a11y·hub-viewer(논문 허브의 틀·메모·접근성·원문 뷰어, 가짜 응답),
+// briefing(브리핑 목록·상세, 가짜 응답). 아무것도 주지 않으면 모두 돈다.
 // components와 signup 말고는 로컬 Supabase가 떠 있어야 한다(npm run db:start). 화면 검사용 계정은 끝나면 지운다.
 // 실행 준비와 묶음별 조건은 docs/dev/setup.md의 "화면 검사" 절.
 import { chromium } from 'playwright';
@@ -2028,6 +2029,201 @@ async function hubViewer() {
 	await none.context.close();
 }
 
+// ---- 브리핑 화면(가짜 응답, docs/api/openapi.yaml의 BriefingListItem·BriefingDetail 형식) ----
+
+const briefingId = (n) => `00000000-0000-4000-9000-${String(n).padStart(12, '0')}`;
+const briefingDay = (n) => new Date(Date.UTC(2026, 9, 18) - n * 86400000).toISOString().slice(0, 10);
+const briefingItem = (n) => ({ id: briefingId(n), date: briefingDay(n), summary: `자리표시 요약 ${n}` });
+const BRIEFING_LONG_URL = `https://example.com/${'a'.repeat(100)}`;
+function briefingDetail(n) {
+	const body =
+		n === 1
+			? '메일 제목: <script>alert(1)</script>\n<b>굵게가 아니라 글자</b>'
+			: n === 2
+				? `긴 주소\n${BRIEFING_LONG_URL}\n끝`
+				: '먼저 할 일\n- 자리표시 할 일';
+	return { ...briefingItem(n), body, paperIds: n === 0 ? [paperId(1), paperId(2)] : [] };
+}
+
+function briefingHandlers(state) {
+	return {
+		'GET /api/briefings': (u) => {
+			if (state.list) return state.list(u);
+			// 첫 묶음 30건(0~29), cursor=c2이면 30~34. 묶음 경계의 29를 한 번 더 넣어 중복 제거를 본다
+			if (u.searchParams.get('cursor') === 'c2') return list([29, 30, 31, 32, 33, 34].map(briefingItem));
+			return list(Array.from({ length: 30 }, (_, i) => briefingItem(i)), 'c2');
+		},
+		'GET /api/briefings/:id': (u) => {
+			const n = Number(u.pathname.slice(-12));
+			if (n >= 900) return { status: 404, body: { error: { code: 'briefing_not_found', message: '' } } };
+			return { body: briefingDetail(n) };
+		},
+		'GET /api/papers/:id': (u) => ({ body: { ...paper(Number(u.pathname.slice(-12)), `시험 논문 ${u.pathname.slice(-1)}`) } })
+	};
+}
+
+async function buttonNames(page) {
+	return page.locator('main button, main [role="button"], main input').evaluateAll((els) => els.map((el) => el.textContent?.trim() || el.getAttribute('aria-label') || ''));
+}
+
+async function briefingScreens() {
+	const tag = '브리핑(가짜 응답)';
+	const state = {};
+	const { context } = await loggedInContext({ viewport: { width: 1280, height: 900 } });
+	const page = await context.newPage();
+	const calls = await mockApi(page, briefingHandlers(state));
+	const listCalls = () => calls.filter((c) => c.path === '/api/briefings');
+
+	// 불러오는 중
+	state.list = () => ({ ...list([briefingItem(0)]), delay: 1500 });
+	await page.goto(url + '/log');
+	await page.getByText('브리핑을 불러오는 중입니다').waitFor({ timeout: 5000 });
+	report((await page.locator('main [role="status"][aria-busy="true"]').count()) === 1, `${tag} 불러오는 중 표시가 role=status`);
+	await page.waitForLoadState('networkidle');
+
+	// 목록과 더 보기
+	state.list = null;
+	await open(page, '/log');
+	const links = page.locator('main ul[aria-label="브리핑 목록"] a');
+	report((await links.count()) === 30, `${tag} 첫 화면 30건`);
+	report((await links.first().getAttribute('href')) === `/log/${briefingId(0)}` && (await links.first().innerText()).includes('2026년 10월 18일 일요일'), `${tag} 맨 위가 가장 최근 날짜이고 상세 링크`);
+	await page.getByRole('button', { name: '더 보기' }).click();
+	await page.waitForFunction(() => document.querySelectorAll('main ul[aria-label="브리핑 목록"] a').length >= 35);
+	const hrefs = await links.evaluateAll((els) => els.map((el) => el.getAttribute('href')));
+	report(hrefs.length === 35 && new Set(hrefs).size === 35, `${tag} 더 보기 뒤 35건, 같은 id 없음`);
+	report((await page.getByRole('button', { name: '더 보기' }).count()) === 0, `${tag} 마지막 묶음 뒤 더 보기 사라짐`);
+
+	// 셸: 패널 접힘, 메뉴 브리핑 현재 위치, 쓰기 조작 없음
+	report((await page.locator('aside.panel').count()) === 0, `${tag} 오른쪽 설정 패널 없음`);
+	const workWidth = await page.locator('main.work').evaluate((el) => el.getBoundingClientRect().width);
+	report(workWidth > 900, `${tag} 작업 영역이 패널 폭을 이어받음(${Math.round(workWidth)}px)`);
+	const navLink = page.locator('nav a', { hasText: '브리핑' });
+	report((await navLink.getAttribute('href')) === '/log' && (await navLink.getAttribute('aria-current')) === 'page', `${tag} 메뉴 브리핑이 /log, aria-current=page`);
+	const listButtons = await buttonNames(page);
+	console.log(`     목록 화면 버튼: ${JSON.stringify(listButtons)}`);
+	report(!listButtons.some((n) => /추가|수정|삭제|만들기|편집/.test(n)), `${tag} 목록에 추가·수정·삭제 조작 없음`);
+
+	// 메뉴에서 이동
+	await open(page, '/library');
+	await page.locator('nav a', { hasText: '브리핑' }).click();
+	await page.waitForURL(/\/log$/);
+	report(true, `${tag} 메뉴의 브리핑을 누르면 /log`);
+
+	// 더 보기 500 → 오류 안내와 다시 시도
+	await open(page, '/log');
+	let failMore = true;
+	state.list = (u) => {
+		if (u.searchParams.get('cursor') === 'c2') return failMore ? { status: 500, body: { error: { code: 'internal_error', message: '' } } } : list([30].map(briefingItem));
+		return list(Array.from({ length: 30 }, (_, i) => briefingItem(i)), 'c2');
+	};
+	await open(page, '/log');
+	await page.getByRole('button', { name: '더 보기' }).click();
+	await page.locator('main [role="alert"]').waitFor({ timeout: 5000 });
+	const before = listCalls().filter((c) => c.params.get('cursor') === 'c2').length;
+	await page.screenshot({ path: `${outDir}/light-1280-briefing-error.png` });
+	failMore = false;
+	await page.getByRole('button', { name: '다시 시도' }).click();
+	await page.waitForFunction(() => document.querySelectorAll('main ul[aria-label="브리핑 목록"] a').length === 31);
+	report(listCalls().filter((c) => c.params.get('cursor') === 'c2').length === before + 1, `${tag} 더 보기 500에 role=alert 안내, 다시 시도로 같은 요청 재전송`);
+
+	// 첫 목록 500
+	state.list = () => ({ status: 500, body: { error: { code: 'internal_error', message: '' } } });
+	await open(page, '/log');
+	report((await page.locator('main [role="alert"]').count()) === 1 && (await page.getByRole('button', { name: '다시 시도' }).count()) === 1, `${tag} 첫 목록 500이면 오류와 다시 시도`);
+
+	// 더 보기 401 → 목록 유지, 로그인 링크
+	state.list = (u) =>
+		u.searchParams.get('cursor') === 'c2' ? { status: 401, body: { error: { code: 'unauthenticated', message: '' } } } : list([0, 1].map(briefingItem), 'c2');
+	await open(page, '/log');
+	await page.getByRole('button', { name: '더 보기' }).click();
+	await page.getByRole('link', { name: '로그인' }).waitFor({ timeout: 5000 });
+	report((await links.count()) === 2 && page.url().endsWith('/log'), `${tag} 더 보기 401이면 목록을 지운 채 넘어가지 않고 로그인 안내`);
+
+	// 빈 상태
+	state.list = () => list([]);
+	await open(page, '/log');
+	report(
+		(await page.getByText('아직 브리핑이 없어요').count()) === 1 && (await page.getByRole('button', { name: '더 보기' }).count()) === 0 && (await page.locator('main [role="status"]').count()) === 1,
+		`${tag} 빈 상태 안내(role=status), 더 보기 없음`
+	);
+	state.list = null;
+
+	// 상세: 태그 글자, 논문 링크, 논문 없음, 없는 id
+	let dialogs = 0;
+	page.on('dialog', (d) => {
+		dialogs++;
+		void d.dismiss();
+	});
+	await open(page, `/log/${briefingId(1)}`);
+	const bodyText = await page.getByTestId('briefing-body').innerText();
+	report(bodyText.includes('<script>alert(1)</script>') && (await page.locator('main b, main script').count()) === 0 && dialogs === 0, `${tag} 본문의 태그는 글자 그대로, 스크립트 실행 없음`);
+	report((await page.getByRole('heading', { name: '언급된 논문' }).count()) === 0, `${tag} 논문 언급 없는 브리핑에는 링크 영역 없음`);
+	const detailButtons = await buttonNames(page);
+	console.log(`     상세 화면 버튼: ${JSON.stringify(detailButtons)}`);
+	report(!detailButtons.some((n) => /추가|수정|삭제|만들기|편집/.test(n)), `${tag} 상세에 추가·수정·삭제 조작 없음`);
+	report((await page.locator('aside.panel').count()) === 0, `${tag} 상세에도 오른쪽 패널 없음`);
+
+	await open(page, `/log/${briefingId(0)}`);
+	const paperHrefs = await page.locator('main section a').evaluateAll((els) => els.map((el) => el.getAttribute('href')));
+	report(JSON.stringify(paperHrefs) === JSON.stringify([`/papers/${paperId(1)}`, `/papers/${paperId(2)}`]), `${tag} 논문 링크 href가 /papers/{논문 id}`);
+
+	await open(page, `/log/${briefingId(999)}`);
+	report((await page.getByText('브리핑을 찾을 수 없습니다').count()) === 1 && (await page.locator('main a[href="/log"]').count()) >= 1, `${tag} 없는 id는 찾을 수 없음과 /log 링크`);
+
+	// 키보드 Tab으로 목록 항목과 더 보기에 닿는지
+	await open(page, '/log');
+	const reached = new Set();
+	await page.locator('h1').click();
+	for (let i = 0; i < 60 && reached.size < 2; i++) {
+		await page.keyboard.press('Tab');
+		const what = await page.evaluate(() => {
+			const el = document.activeElement;
+			if (el?.matches('main ul[aria-label="브리핑 목록"] a')) return 'item';
+			if (el?.textContent?.trim() === '더 보기') return 'more';
+			return '';
+		});
+		if (what) reached.add(what);
+	}
+	report(reached.has('item') && reached.has('more'), `${tag} Tab만으로 목록 항목과 더 보기에 닿음`);
+	await context.close();
+
+	// 폭·테마별 스크린샷과 390px 가로 넘침
+	for (const scheme of ['light', 'dark']) {
+		for (const width of [1280, 390]) {
+			const shot = await loggedInContext({ colorScheme: scheme, viewport: { width, height: 900 } });
+			const p = await shot.context.newPage();
+			const s = {};
+			await mockApi(p, briefingHandlers(s));
+			const name = `${scheme}-${width}`;
+			const noOverflow = () => p.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+			await open(p, '/log');
+			await p.screenshot({ path: `${outDir}/${name}-briefing-list.png`, fullPage: true });
+			report(await noOverflow(), `${tag} ${name} 목록 가로 넘침 없음`);
+			await open(p, `/log/${briefingId(2)}`);
+			await p.screenshot({ path: `${outDir}/${name}-briefing-detail-long.png`, fullPage: true });
+			report(await noOverflow(), `${tag} ${name} 긴 주소 상세 가로 넘침 없음`);
+			await open(p, `/log/${briefingId(0)}`);
+			await p.screenshot({ path: `${outDir}/${name}-briefing-detail.png`, fullPage: true });
+			s.list = () => list([]);
+			await open(p, '/log');
+			await p.screenshot({ path: `${outDir}/${name}-briefing-empty.png` });
+			s.list = () => ({ status: 500, body: { error: { code: 'internal_error', message: '' } } });
+			await open(p, '/log');
+			await p.screenshot({ path: `${outDir}/${name}-briefing-error.png` });
+			await shot.context.close();
+		}
+	}
+
+	// 로그인하지 않은 브라우저로 상세 주소를 열면 돌아올 주소를 붙여 로그인으로
+	const anon = await browser.newContext();
+	const anonPage = await anon.newPage();
+	await anonPage.goto(url + `/log/${briefingId(0)}`);
+	await anonPage.waitForURL(/\/login/);
+	const loginParams = new URL(anonPage.url()).searchParams;
+	report(loginParams.get('redirect') === `/log/${briefingId(0)}`, `${tag} 로그아웃 상태로 상세를 열면 /login?redirect=/log/{id}`);
+	await anon.close();
+}
+
 // ---- 실행 ----
 
 for (const scheme of ['light', 'dark']) {
@@ -2045,6 +2241,7 @@ if (want('hub-frame')) await hubFrame();
 if (want('hub-memo')) await hubMemo();
 if (want('hub-a11y')) await hubA11y();
 if (want('hub-viewer')) await hubViewer();
+if (want('briefing')) await briefingScreens();
 if (dbUsed) cleanupDb();
 
 await browser.close();
