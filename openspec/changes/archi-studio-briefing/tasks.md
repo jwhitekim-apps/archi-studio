@@ -27,8 +27,8 @@
 
 ## 6. 문서와 마무리
 
-- [ ] 6.1 `docs/api/openapi.yaml`의 `/api/briefings`에 `limit` 범위(1~100)와 400 `invalid_request` 응답을 추가하고 `BriefingListItem`·`BriefingDetail` 필드가 구현과 일치하는지 대조하며, `npx @redocly/cli lint docs/api/openapi.yaml`이 오류 없이 끝난다
-- [ ] 6.2 `docs/dev/auth-test-map.md`와 같은 형식으로 `briefing` 스펙의 요구사항 3개와 시나리오 3개를 시험 이름과 짝지은 표를 `docs/dev/briefing-test-map.md`에 만들고, 적힌 시험 이름이 실제 파일에 있는지 `grep`으로 대조한다
+- [x] 6.1 `docs/api/openapi.yaml`의 `/api/briefings`에 `limit` 범위(1~100)와 400 `invalid_request` 응답을 추가하고 `BriefingListItem`·`BriefingDetail` 필드가 구현과 일치하는지 대조하며, `npx @redocly/cli lint docs/api/openapi.yaml`이 오류 없이 끝난다
+- [x] 6.2 `docs/dev/auth-test-map.md`와 같은 형식으로 `briefing` 스펙의 요구사항 3개와 시나리오 3개를 시험 이름과 짝지은 표를 `docs/dev/briefing-test-map.md`에 만들고, 적힌 시험 이름이 실제 파일에 있는지 `grep`으로 대조한다
 - [ ] 6.3 `npm run db:reset` 뒤 `npm run check`, `npm test`, `npm run test:auth`, `npm run build`, `npm run check:tokens`, `openspec validate archi-studio-briefing --strict`, `openspec validate --specs --strict`가 모두 통과하고, 끝나면 `npm run db:stop`으로 로컬 DB를 내린다
 
 ## Workflow follow-up

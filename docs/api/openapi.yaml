@@ -572,9 +572,12 @@ paths:
           schema:
             type: integer
             minimum: 1
+            maximum: 100
             default: 30
+          description: 1~100. 범위를 벗어나거나 숫자가 아니면 400 `invalid_request`.
         - name: cursor
           in: query
+          description: 이전 응답의 `nextCursor`(마지막 항목 날짜를 감싼 불투명한 base64url 문자열). 읽을 수 없으면 400 `invalid_request`.
           schema:
             type: string
       responses:
@@ -592,6 +595,8 @@ paths:
                       $ref: '#/components/schemas/BriefingListItem'
                   nextCursor:
                     type: [string, 'null']
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
 
@@ -887,6 +892,7 @@ components:
           format: date
         summary:
           type: string
+          maxLength: 200
     BriefingDetail:
       allOf:
         - $ref: '#/components/schemas/BriefingListItem'
@@ -895,8 +901,10 @@ components:
           properties:
             body:
               type: string
+              description: 일반 텍스트 본문
             paperIds:
               type: array
+              description: 브리핑이 언급한 논문의 내부 id. id 오름차순. 삭제된 논문은 빠진다.
               items:
                 type: string
                 format: uuid
